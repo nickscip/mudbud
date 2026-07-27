@@ -8,11 +8,12 @@
     "scheme": "mudbud",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "bundleIdentifier": "com.mudbud.app"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#FAF5EC",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
@@ -28,15 +29,31 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#FAF5EC",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
+        }
+      ],
+      "expo-video",
+      "expo-sqlite",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Mudbud uses your photo library so you can add photos and videos of your pieces.",
+          "cameraPermission": "Mudbud uses the camera so you can capture your pottery process.",
+          "microphonePermission": "Mudbud uses the microphone when you record video of your process."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Mudbud uses the camera so you can capture your pottery process.",
+          "microphonePermission": "Mudbud uses the microphone when you record video of your process."
         }
       ]
     ],
     "experiments": {
-      "typedRoutes": true,
-      "reactCompiler": true
+      "typedRoutes": true
     }
   }
 }

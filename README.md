@@ -1,56 +1,55 @@
-# Welcome to your Expo app 👋
+# Mudbud 🏺
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A pottery app for documenting a piece end-to-end — from wet clay on the wheel to
+out of the kiln. This is **Slice 1: Process Capture** (local-only, single user).
 
-## Get started
+## Run it on your iPhone (no Xcode needed)
 
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
+1. Install the **Expo Go** app from the App Store on your iPhone.
+2. In this folder on your Mac:
    ```bash
    npx expo start
    ```
+3. Scan the QR code in the terminal with your iPhone camera → the app opens in Expo Go,
+   with live reload as you edit.
 
-In the output, you'll find options to open the app in a
+> Your Mac and iPhone must be on the same Wi-Fi. If the LAN connection is blocked,
+> run `npx expo start --tunnel`.
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## What's here
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+Core loop: **Shelf → Piece timeline → Add moment (capture) → Moment detail.**
 
-## Get a fresh project
+- **The Shelf** (`src/app/index.tsx`) — your pieces as a warm gallery grid.
+- **New piece** (`src/app/new-piece.tsx`) — name it, note the clay body.
+- **Piece timeline** (`src/app/piece/[id]/index.tsx`) — the signature *firing timeline*:
+  a vertical spine whose nodes warm in color as the piece moves through pottery stages
+  (throwing → trimming → greenware → bisque → glazing → firing → fired).
+- **Add to timeline** (`src/app/piece/[id]/add-entry.tsx`) — capture photos/video (camera
+  or library), pick the stage, write a note.
+- **Moment detail** (`src/app/entry/[id].tsx`) — swipeable media, video playback, notes.
 
-When you're ready, run:
+Everything is stored **locally** (SQLite + on-disk media) — no account, no network.
+
+## Stack
+
+Expo SDK 57 (RN 0.86, React 19) · Expo Router · TypeScript · NativeWind (Tailwind) ·
+Reanimated 4 + Moti (motion) · expo-haptics (tactile feel) · expo-image (blurhash) ·
+expo-image-picker / expo-video (media) · expo-sqlite + Drizzle ORM · Fraunces + Inter.
+
+Design system lives in `src/theme/tokens.ts` and `tailwind.config.js`.
+
+## Roadmap (next slices)
+
+- **Phase 2 — Signature visuals:** add React Native Skia (clay-texture backgrounds,
+  wet-clay wheel loader, gooey transitions). Requires a dev client (EAS or Xcode).
+- **Phase 3 — Cloud + Community:** Supabase (auth, storage, sync), opt-in public sharing.
+- **Phase 4 — Prediction:** clay + glaze → gallery of how that combo actually fired
+  (retrieval, not generative).
+
+## Verify locally
 
 ```bash
-npm run reset-project
+npx tsc --noEmit                 # types
+npx expo export --platform ios   # full bundle smoke test
 ```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-### Other setup steps
-
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
