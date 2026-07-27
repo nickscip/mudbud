@@ -161,7 +161,9 @@ async def ingest_snapshot(payload: IngestInput) -> IngestOutput:
             headers={"User-Agent": adapter.politeness.user_agent},
         ) as client:
             media = (
-                MediaProcessor(client, _blob_store(settings)) if payload.with_images else None
+                MediaProcessor(client, _blob_store(settings, payload.manufacturer))
+                if payload.with_images
+                else None
             )
             result = await ingest_product(snapshot, adapter, loader, media, namer)
         conn.commit()
@@ -186,11 +188,14 @@ async def finalise(manufacturer: str) -> dict[str, int]:
     return {"cone_inherited": cones, "layer_links": links}
 
 
-def _blob_store(settings: Settings) -> BlobStore:
-    """Same rule as the CLI: hosted private bucket when configured, local cache otherwise."""
-    if settings.supabase_url and settings.service_key:
+def _blob_store(settings: Settings, manufacturer: str) -> BlobStore:
+    """Same rule as the CLI: hosted private bucket when configured, local cache otherwise.
+
+    One bucket per manufacturer, derived — `mudbud_amaco`.
+    """
+    if settings.supabase_url and settings.secret_key:
         return SupabaseBlobStore(
-            settings.supabase_url, settings.service_key, settings.storage_bucket
+            settings.supabase_url, settings.secret_key, settings.bucket_for(manufacturer)
         )
     return LocalBlobStore(settings.blob_dir)
 

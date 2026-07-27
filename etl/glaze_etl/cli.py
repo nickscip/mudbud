@@ -213,17 +213,19 @@ def reparse(
         typer.echo("dry run: nothing written")
 
 
-def _blob_store(settings: Settings, blob_dir: str) -> BlobStore:
-    """Prefer the hosted private bucket when it is configured, else the local cache.
+def _blob_store(settings: Settings, blob_dir: str, manufacturer: str) -> BlobStore:
+    """Prefer the hosted private bucket when configured, else the local cache.
 
     Chosen by whether credentials exist rather than by a flag, so the same command works in
     development and against a real project without anyone remembering to pass anything.
+
+    The bucket is per manufacturer — `mudbud_amaco` — so a second source cannot write its
+    images into the first one's bucket.
     """
-    if settings.supabase_url and settings.service_key:
-        log.info("blobs.supabase", bucket=settings.storage_bucket)
-        return SupabaseBlobStore(
-            settings.supabase_url, settings.service_key, settings.storage_bucket
-        )
+    if settings.supabase_url and settings.secret_key:
+        bucket = settings.bucket_for(manufacturer)
+        log.info("blobs.supabase", bucket=bucket)
+        return SupabaseBlobStore(settings.supabase_url, settings.secret_key, bucket)
     log.info("blobs.local", path=blob_dir)
     return LocalBlobStore(Path(blob_dir))
 
@@ -290,7 +292,8 @@ def load(
                 timeout=settings.request_timeout_s,
                 headers={"User-Agent": adapter.politeness.user_agent},
             ) as client:
-                media = MediaProcessor(client, _blob_store(settings, blob_dir)) if images else None
+                blobs = _blob_store(settings, blob_dir, adapter.manufacturer.value)
+                media = MediaProcessor(client, blobs) if images else None
                 for url, fetched_at, status, etag, digest, body in rows:
                     snapshot = RawSnapshot(
                         url=url,

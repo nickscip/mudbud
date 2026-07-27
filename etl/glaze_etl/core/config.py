@@ -30,26 +30,40 @@ class Settings(BaseSettings):
 
     supabase_url: str = Field(default="", alias="SUPABASE_URL")
 
-    service_key: str = Field(
+    secret_key: str = Field(
         default="",
-        alias="SUPABASE_SERVICE_KEY",
+        alias="SUPABASE_SECRET_KEY",
         description=(
-            "Service role, not anon: the pipeline writes. This key bypasses row-level "
-            "security entirely, so it is treated like a database password and never "
-            "reaches the app."
+            "Supabase's `sb_secret_...` key — what the dashboard now calls the *secret* key, "
+            "formerly `service_role`. Named to match what you actually see in Settings > API. "
+            "It bypasses row-level security entirely, so it is treated like a database "
+            "password and never reaches the app, which uses the publishable key instead."
         ),
     )
 
-    storage_bucket: str = Field(default="product-images", alias="SUPABASE_STORAGE_BUCKET")
+    storage_bucket_prefix: str = Field(
+        default="mudbud",
+        alias="SUPABASE_STORAGE_BUCKET_PREFIX",
+        description=(
+            "Buckets are one per manufacturer, named `<prefix>_<manufacturer>` — so "
+            "`mudbud_amaco`. Derived rather than configured so adding a second source cannot "
+            "silently write its images into the first one's bucket."
+        ),
+    )
+
+    def bucket_for(self, manufacturer: str) -> str:
+        """`amaco` -> `mudbud_amaco`."""
+        return f"{self.storage_bucket_prefix}_{manufacturer}"
 
     # ------------------------------------------------------------------------- pipeline
     snapshot_retention: int = Field(
-        default=3,
+        default=1,
         ge=1,
         alias="SNAPSHOT_RETENTION",
         description=(
-            "How many raw_snapshots to keep per URL. A weekly full crawl adds ~22MB per "
-            "pass against Supabase's 500MB tier, so this is not optional."
+            "How many raw_snapshots to keep per URL. Reparse only ever reads the newest per "
+            "URL, so keeping more buys history rather than capability — measured at ~26MB for "
+            "the full corpus at 1, against Supabase's 500MB free tier."
         ),
     )
 
@@ -72,7 +86,7 @@ class Settings(BaseSettings):
     def redacted(self) -> dict[str, str]:
         """For logging a run's configuration without leaking credentials."""
         safe = self.model_dump()
-        for key in ("database_url", "service_key"):
+        for key in ("database_url", "secret_key"):
             if safe.get(key):
                 safe[key] = "***"
         return {k: str(v) for k, v in safe.items()}
