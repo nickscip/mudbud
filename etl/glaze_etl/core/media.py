@@ -79,7 +79,15 @@ class SupabaseBlobStore:
     Writes use the service role, so this never runs with the anon key the app holds.
     """
 
-    def __init__(self, url: str, service_key: str, bucket: str, *, timeout: int = 60) -> None:
+    def __init__(
+        self,
+        url: str,
+        service_key: str,
+        bucket: str,
+        *,
+        timeout: int = 60,
+        known_keys: set[str] | None = None,
+    ) -> None:
         from storage3 import SyncStorageClient
 
         # The timeout goes on the http client, not the storage client: storage3 2.31
@@ -93,6 +101,11 @@ class SupabaseBlobStore:
             http_client=self._http,
         )
         self._bucket_id = bucket
+        # Keys already in the bucket. Supplied up front because the alternative is one HTTP
+        # round trip per blob just to ask "do you have this?" — 1294 of them on a full load,
+        # which dominated the run at roughly 12 minutes of pure latency. The caller can answer
+        # the same question with a single query against storage.objects.
+        self._known: set[str] = known_keys if known_keys is not None else set()
         self._ensure_bucket()
 
     def _ensure_bucket(self) -> None:
@@ -107,11 +120,16 @@ class SupabaseBlobStore:
         return self._storage.from_(self._bucket_id)
 
     def exists(self, key: str) -> bool:
+        if key in self._known:
+            return True
         try:
-            return bool(self._bucket.exists(key))
+            found = bool(self._bucket.exists(key))
         # storage3 raises for a missing object rather than returning False.
         except Exception:
             return False
+        if found:
+            self._known.add(key)
+        return found
 
     def put(self, key: str, data: bytes, content_type: str) -> str:
         self._bucket.upload(
@@ -119,6 +137,7 @@ class SupabaseBlobStore:
             data,
             {"content-type": content_type, "upsert": "true", "cache-control": "31536000"},
         )
+        self._known.add(key)
         return key
 
     def signed_url(self, key: str, expires_in: int = 3600) -> str:

@@ -20,6 +20,7 @@ from glaze_etl.core.color import Lab
 from glaze_etl.core.color_namer import ColorNamer, ColorTerm
 from glaze_etl.core.config import Settings
 from glaze_etl.core.db import connect as db_connect
+from glaze_etl.core.db import stored_object_keys
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import BlobStore, LocalBlobStore, MediaProcessor, SupabaseBlobStore
@@ -214,7 +215,12 @@ def reparse(
         typer.echo("dry run: nothing written")
 
 
-def _blob_store(settings: Settings, blob_dir: str, manufacturer: str) -> BlobStore:
+def _blob_store(
+    settings: Settings,
+    blob_dir: str,
+    manufacturer: str,
+    known_keys: set[str] | None = None,
+) -> BlobStore:
     """Prefer the hosted private bucket when configured, else the local cache.
 
     Chosen by whether credentials exist rather than by a flag, so the same command works in
@@ -226,7 +232,9 @@ def _blob_store(settings: Settings, blob_dir: str, manufacturer: str) -> BlobSto
     if settings.supabase_url and settings.secret_key:
         bucket = settings.bucket_for(manufacturer)
         log.info("blobs.supabase", bucket=bucket)
-        return SupabaseBlobStore(settings.supabase_url, settings.secret_key, bucket)
+        return SupabaseBlobStore(
+            settings.supabase_url, settings.secret_key, bucket, known_keys=known_keys
+        )
     log.info("blobs.local", path=blob_dir)
     return LocalBlobStore(Path(blob_dir))
 
@@ -293,7 +301,10 @@ def load(
                 timeout=settings.request_timeout_s,
                 headers={"User-Agent": adapter.politeness.user_agent},
             ) as client:
-                blobs = _blob_store(settings, blob_dir, adapter.manufacturer.value)
+                already = stored_object_keys(conn, settings.bucket_for(adapter.manufacturer.value))
+                if already:
+                    log.info("blobs.known", objects=len(already))
+                blobs = _blob_store(settings, blob_dir, adapter.manufacturer.value, already)
                 # The local directory doubles as a byte cache even when blobs go to
                 # Supabase, so switching backends does not re-download the corpus.
                 media = (
