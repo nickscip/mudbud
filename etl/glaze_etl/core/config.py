@@ -15,10 +15,16 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Anchored to the package, not the working directory. A bare ".env" is resolved against CWD,
+# so `glaze-etl load` picked up config when run from etl/ and silently found none when run
+# from the repo root — and would have read a stray root .env in preference to the real one.
+# Configuration must not depend on where the command was typed.
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", extra="ignore", populate_by_name=True
+        env_file=ENV_FILE, extra="ignore", populate_by_name=True
     )
 
     # ------------------------------------------------------------------------- Supabase
