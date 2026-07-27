@@ -31,7 +31,14 @@ yarn-error.*
 *.pem
 
 # local env files
-.env*.local
+#
+# Every .env is ignored, not just *.local. The ETL reads `etl/.env` (pydantic-settings
+# env_file) and that file holds the Supabase service-role key, which bypasses RLS
+# entirely. Only the .example templates are tracked.
+.env
+.env.*
+!.env.example
+!*/.env.example
 
 # typescript
 *.tsbuildinfo
