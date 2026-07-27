@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from glaze_etl.core.models import ManufacturerKey, Opacity
 from glaze_etl.sources.amaco.adapter import is_glaze_slug, parse_sitemap
-from glaze_etl.sources.amaco.parser import parse_product, strip_cache_buster
+from glaze_etl.sources.amaco.parser import clean_text, parse_product, strip_cache_buster
 from tests.conftest import FIXTURES, all_product_slugs, snapshot_for
 
 SLUGS = all_product_slugs()
@@ -105,3 +107,36 @@ class TestDiscovery:
         refs = parse_sitemap((FIXTURES / "sitemap-products-1.xml").read_text())
         glazes = [r for r in refs if is_glaze_slug(r.external_id)]
         assert 200 < len(glazes) < 450, len(glazes)
+
+
+class TestTextCleaning:
+    """JSON-LD carries prose as the site authored it, entities and all. 128 glazes had
+    literal "&nbsp;" or "&deg;" reaching the app before this."""
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("Texture accentuates this effect.&nbsp;", "Texture accentuates this effect."),
+            ("Fires to 1222&deg;C", "Fires to 1222°C"),
+            ("&ldquo;floating&rdquo; blue", "“floating” blue"),
+            ("Glazes &amp; Underglazes", "Glazes & Underglazes"),
+            ("AMACO&reg; celadon", "AMACO® celadon"),
+            ("caf&eacute; au lait", "café au lait"),
+            ("collapse   inner    runs", "collapse inner runs"),
+            ("  trim edges  ", "trim edges"),
+        ],
+    )
+    def test_entities_decoded_and_whitespace_normalised(self, raw: str, expected: str) -> None:
+        assert clean_text(raw) == expected
+
+    def test_real_description_has_no_entities_left(self) -> None:
+        product = parse_product(snapshot_for("pc-20-blue-rutile"))
+        assert product.description
+        assert "&" not in product.description or "&amp;" not in product.description
+        assert "&nbsp;" not in product.description
+
+    @pytest.mark.parametrize("slug", SLUGS)
+    def test_no_fixture_leaks_an_entity(self, slug: str) -> None:
+        product = parse_product(snapshot_for(slug))
+        for field in (product.name, product.description or ""):
+            assert not re.search(r"&[a-zA-Z#0-9]+;", field), field

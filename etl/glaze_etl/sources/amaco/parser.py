@@ -13,6 +13,7 @@ rollers and kiln elements. Scoping to the gallery removes that entire class of e
 
 from __future__ import annotations
 
+import html
 import json
 import re
 from typing import Any
@@ -58,6 +59,21 @@ def _json_ld_blocks(tree: HTMLParser) -> list[dict[str, Any]]:
             continue  # A malformed block is not a reason to lose the whole page.
         out.extend(d for d in (data if isinstance(data, list) else [data]) if isinstance(d, dict))
     return out
+
+
+def clean_text(value: str) -> str:
+    """Decode HTML entities and normalise whitespace in scraped prose.
+
+    JSON-LD carries the description as the site authored it, entities included, so the app was
+    rendering literal "&nbsp;" and "&deg;" — 128 glazes were affected. `&deg;` matters here:
+    it appears in firing temperatures, where "1222&deg;C" is not a temperature.
+
+    Non-breaking spaces become ordinary ones rather than being preserved, because they are
+    an artefact of the CMS rather than intentional typography, and they break word wrapping
+    on a phone.
+    """
+    decoded = html.unescape(value).replace("\xa0", " ")
+    return re.sub(r"[ \t]+", " ", decoded).strip()
 
 
 def _basename(url: str) -> str:
@@ -108,10 +124,10 @@ def parse_product(snap: RawSnapshot) -> ParsedProduct:
     blocks = _json_ld_blocks(tree)
 
     product = next((b for b in blocks if b.get("@type") == "Product"), {})
-    name = str(product.get("name") or "").strip()
+    name = clean_text(str(product.get("name") or ""))
     if not name:
         title = tree.css_first("title")
-        name = (title.text() if title else "").split("|")[0].strip()
+        name = clean_text((title.text() if title else "").split("|")[0])
 
     # Breadcrumbs place the product in its line: Home > Glazes > High Fire > (PC) ...
     crumbs: tuple[str, ...] = ()
@@ -119,7 +135,7 @@ def parse_product(snap: RawSnapshot) -> ParsedProduct:
         if block.get("@type") == "BreadcrumbList":
             items = block.get("itemListElement") or []
             crumbs = tuple(
-                str((i.get("item") or {}).get("name", "")).strip()
+                clean_text(str((i.get("item") or {}).get("name", "")))
                 for i in items
                 if isinstance(i, dict)
             )
@@ -165,7 +181,9 @@ def parse_product(snap: RawSnapshot) -> ParsedProduct:
         line_name=GLAZE_LINE_NAMES.get(line_code) if line_code else None,
         cone_category=cone_category,
         breadcrumb=crumbs,
-        description=(str(product["description"]).strip() if product.get("description") else None),
+        description=(
+            clean_text(str(product["description"])) if product.get("description") else None
+        ),
         price_min=min(prices) if prices else None,
         price_max=max(prices) if prices else None,
         availability=(

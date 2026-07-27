@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Linking, ScrollView, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Txt } from "@/components/AppText";
@@ -146,18 +147,33 @@ export default function GlazeDetailScreen() {
           <View className="mt-6 px-4">
             <CoatsStrip appearances={grouped.coats} />
           </View>
+        ) : grouped.unsplitComposite ? (
+          <View className="mt-6 px-4">
+            <View className="mb-3 flex-row items-baseline justify-between">
+              <Txt variant="title" className="text-base">
+                Coat thickness
+              </Txt>
+              <Txt variant="caption">thin → thick</Txt>
+            </View>
+            {/* AMACO publishes this as one photograph with its own captions, and for some
+                layouts we cannot yet cut it into per-coat regions. Showing it whole beats
+                showing nothing — the information is visible, just not separated. */}
+            <Image
+              source={{ uri: grouped.unsplitComposite.source_url }}
+              style={{ width: "100%", aspectRatio: 4 / 3, borderRadius: 16 }}
+              contentFit="contain"
+              transition={220}
+            />
+            <Txt variant="caption" className="mt-2">
+              Shown as AMACO published it — the coat labels are printed in the image.
+            </Txt>
+          </View>
         ) : (
           <View className="mt-6 px-4">
             <Txt variant="title" className="mb-1 text-base">
               Coat thickness
             </Txt>
-            {/* Honest about a gap rather than rendering an empty row. AMACO publishes a
-                three-tile composite per glaze, but splitting it into per-coat regions is
-                not solved yet, so no thickness data exists to show. */}
-            <Txt variant="caption">
-              Not yet extracted for this glaze — AMACO publishes it as a single combined
-              photograph.
-            </Txt>
+            <Txt variant="caption">Not published for this glaze.</Txt>
           </View>
         )}
 
