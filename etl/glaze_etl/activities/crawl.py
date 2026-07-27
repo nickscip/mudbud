@@ -19,6 +19,7 @@ from temporalio import activity
 from glaze_etl.core.color import Lab
 from glaze_etl.core.color_namer import ColorNamer, ColorTerm
 from glaze_etl.core.config import Settings
+from glaze_etl.core.db import connect as db_connect
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import BlobStore, LocalBlobStore, MediaProcessor, SupabaseBlobStore
@@ -99,7 +100,7 @@ async def fetch_product(payload: FetchInput) -> FetchOutput:
     adapter = _adapter(payload.manufacturer)
     ref = ProductRef(url=payload.url, external_id=payload.external_id)
 
-    with psycopg.connect(settings.database_url, autocommit=True) as conn:
+    with db_connect(settings.database_url, autocommit=True) as conn:
         store = PostgresSnapshotStore(conn)
         async with httpx.AsyncClient(
             timeout=settings.request_timeout_s, follow_redirects=True
@@ -132,7 +133,7 @@ async def ingest_snapshot(payload: IngestInput) -> IngestOutput:
     settings = Settings()
     adapter = _adapter(payload.manufacturer)
 
-    with psycopg.connect(settings.database_url) as conn:
+    with db_connect(settings.database_url) as conn:
         row = conn.execute(
             """
             select url, fetched_at, http_status, etag, content_hash, body
@@ -179,7 +180,7 @@ async def finalise(manufacturer: str) -> dict[str, int]:
     the image that references it. Cone inheritance needs the line rows populated.
     """
     settings = Settings()
-    with psycopg.connect(settings.database_url) as conn:
+    with db_connect(settings.database_url) as conn:
         loader = Loader(conn, Normalizer(load_vocabularies(conn)))
         cones = loader.inherit_line_cones()
         links = loader.link_layering()

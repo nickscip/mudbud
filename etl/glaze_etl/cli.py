@@ -19,6 +19,7 @@ import typer
 from glaze_etl.core.color import Lab
 from glaze_etl.core.color_namer import ColorNamer, ColorTerm
 from glaze_etl.core.config import Settings
+from glaze_etl.core.db import connect as db_connect
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import BlobStore, LocalBlobStore, MediaProcessor, SupabaseBlobStore
@@ -89,7 +90,7 @@ def crawl(
 
         log.info("crawl.start", products=len(refs), delay_s=adapter.politeness.crawl_delay_s)
 
-        conn = None if dry_run else psycopg.connect(settings.database_url, autocommit=True)
+        conn = None if dry_run else db_connect(settings.database_url, autocommit=True)
         try:
             store = _store_for(conn)
             async with httpx.AsyncClient(
@@ -183,7 +184,7 @@ def reparse(
     counts = {"high": 0, "medium": 0, "low": 0}
     products = 0
 
-    with psycopg.connect(settings.database_url) as conn:
+    with db_connect(settings.database_url) as conn:
         # Newest snapshot per URL only; older ones are history, not current truth.
         rows = conn.execute(
             """
@@ -267,7 +268,7 @@ def load(
     adapter = AmacoAdapter()
 
     async def run() -> None:
-        with psycopg.connect(settings.database_url, autocommit=False) as conn:
+        with db_connect(settings.database_url) as conn:
             normalizer = Normalizer(load_vocabularies(conn))
             loader = Loader(conn, normalizer)
             namer = _color_namer(conn)
