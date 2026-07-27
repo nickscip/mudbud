@@ -337,5 +337,99 @@ def load(
     asyncio.run(run())
 
 
+@app.command()
+def sync(
+    slug: Annotated[
+        list[str] | None, typer.Argument(help="Specific slugs, or omit for the catalog.")
+    ] = None,
+    limit: Annotated[int, typer.Option(help="Cap products. 0 = the whole catalog.")] = 0,
+    images: Annotated[bool, typer.Option(help="Download and measure images.")] = True,
+    blob_dir: Annotated[str, typer.Option(help="Local image cache.")] = "./.blobs",
+) -> None:
+    """Crawl and ingest in one pass, touching only what changed. The command a cron runs.
+
+    `crawl` then `load` also works, but `load` reprocesses all 352 products every time — fine
+    by hand, wasteful on a schedule. Here a product is parsed only if its fetch actually stored
+    a new snapshot, so a steady-state week does ~350 conditional GETs and almost no work.
+
+    Deliberately mirrors SyncManufacturerWorkflow, and both call the same core functions, so the
+    scheduled path and the manual one cannot drift apart.
+    """
+    settings = Settings()
+    adapter = AmacoAdapter()
+
+    async def run() -> None:
+        refs: list[ProductRef] = []
+        if slug:
+            # Targeted re-sync, e.g. after fixing the grammar for one product.
+            refs = [
+                ProductRef(
+                    url=f"https://shop.amaco.com/{s.strip('/')}/", external_id=s.strip("/")
+                )
+                for s in slug
+            ]
+        else:
+            async for ref in adapter.discover():
+                refs.append(ref)
+                if limit and len(refs) >= limit:
+                    break
+
+        log.info("sync.start", products=len(refs), delay_s=adapter.politeness.crawl_delay_s)
+        stored = unchanged = ingested = 0
+        failed: list[str] = []
+
+        with db_connect(settings.database_url) as conn:
+            loader = Loader(conn, Normalizer(load_vocabularies(conn)))
+            namer = _color_namer(conn)
+            already = stored_object_keys(conn, settings.bucket_for(adapter.manufacturer.value))
+            blobs = _blob_store(settings, blob_dir, adapter.manufacturer.value, already)
+
+            async with httpx.AsyncClient(
+                timeout=settings.request_timeout_s,
+                follow_redirects=True,
+                headers={"User-Agent": adapter.politeness.user_agent},
+            ) as client:
+                media = (
+                    MediaProcessor(client, blobs, byte_cache=Path(blob_dir)) if images else None
+                )
+                fetcher = Fetcher(
+                    client,
+                    PostgresSnapshotStore(conn),
+                    ManufacturerKey.AMACO,
+                    adapter.politeness,
+                    retention=settings.snapshot_retention,
+                    max_attempts=settings.max_attempts,
+                )
+
+                for ref in refs:
+                    result = await fetcher.fetch(ref)
+                    if result.outcome is not FetchOutcome.STORED or result.snapshot is None:
+                        unchanged += 1
+                        continue
+                    stored += 1
+                    try:
+                        await ingest_product(result.snapshot, adapter, loader, media, namer)
+                        ingested += 1
+                    # The snapshot is committed either way, so reparse can retry this later.
+                    except Exception as exc:
+                        log.warning("sync.ingest_failed", slug=ref.external_id, error=str(exc))
+                        failed.append(ref.external_id)
+                    conn.commit()
+
+            cones = loader.inherit_line_cones()
+            links = loader.link_layering()
+            conn.commit()
+
+        typer.secho(
+            f"\nchanged {stored}  unchanged {unchanged}  ingested {ingested}  "
+            f"cone-inherited {cones}  layering {links}  failed {len(failed)}",
+            bold=True,
+        )
+        if failed:
+            typer.secho("  failed: " + ", ".join(failed[:10]), fg=typer.colors.YELLOW)
+
+    asyncio.run(run())
+
+
 if __name__ == "__main__":
     app()
