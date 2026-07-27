@@ -2,16 +2,15 @@
 
 Two decisions carry most of the weight here.
 
-**Sample the centre, not the whole frame.** A test tile photograph is mostly tile, but
-its edges hold rim pooling, the shadow it casts, and white background bleeding in. Glazy
-sampled only the middle of its images for exactly this reason, and it is the difference
-between measuring the glaze and measuring the studio.
+**Sample the centre, not the whole frame.** A test tile photograph is mostly tile, but its
+edges hold rim pooling, the shadow the tile casts, and white background bleeding in. Averaging
+the whole frame measures the studio as much as the glaze.
 
-**Work in LAB, not RGB.** Glazy ranked colour similarity by squared Euclidean distance
-in raw RGB, which is why its colour search was mediocre: RGB distance does not track
-perceived difference, so a pair of dark browns can sit further apart numerically than a
-brown and a green that look nothing alike. LAB with CIEDE2000 is built for the question
-"do these look the same to a person".
+**Work in LAB, not RGB.** RGB distance does not track perceived difference: a pair of dark
+browns can sit further apart numerically than a brown and a green that look nothing alike. So
+Euclidean distance in RGB ranks colour similarity badly, however intuitive it looks. LAB with
+CIEDE2000 is built for the question actually being asked — "do these look the same to a
+person".
 """
 
 from __future__ import annotations

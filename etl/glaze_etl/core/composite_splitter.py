@@ -328,7 +328,7 @@ def sample_region(
 
     * ``inset`` keeps the crop off the tile's edges, which catch rim pooling, the tile's own
       shadow, and white background bleeding in — all of which drag the measured colour away
-      from the glaze. Glazy sampled only the centre of its images for the same reason.
+      from the glaze.
     * ``bottom_limit`` stops the crop short of the bottom because AMACO stands the thrown
       vessel in front of the rightmost tile, and its rim intrudes at ~73% of the box height
       (y≈401 in a y106..510 box, on both PC-20 and PC-30). A flat test tile is uniform top to

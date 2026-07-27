@@ -84,8 +84,8 @@ begin
   select count(*) into n from search_glazes('tenmoku brown');
   if n = 0 then raise exception 'potter term plus family returned nothing'; end if;
 
-  -- The glazy regression: a cone 04-10 glaze must be visible to a cone 6 query.
-  -- Glazy tested endpoint containment and lost exactly these wide-range glazes.
+  -- Cone ranges must overlap, not contain: a cone 04-10 glaze has to be visible to a cone 6
+  -- query. Testing endpoint containment instead loses exactly these wide-range glazes.
   select count(*) into n from search_glazes(
     null, p_cone_from := (select id from cones where name='6'),
           p_cone_to   := (select id from cones where name='6'))
@@ -116,9 +116,8 @@ begin
     raise exception 'clay_bodies_shown missing the clay: %', clays;
   end if;
 
-  -- Pagination must count glazes, not glaze-times-photos. PC-20 has two appearances, so
-  -- a bare join here would return it twice and inflate every limit -- the bug that broke
-  -- glazy's colour search page sizes.
+  -- Pagination must count glazes, not glaze-times-photos. PC-20 has two appearances, so a
+  -- bare join here would return it twice and inflate every limit.
   select count(*) into n from search_glazes(null) where code = 'PC-20';
   if n <> 1 then raise exception 'PC-20 appeared % times; appearances are inflating rows', n; end if;
 

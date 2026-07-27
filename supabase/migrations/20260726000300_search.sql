@@ -30,10 +30,10 @@ create index glazes_name_trgm_idx on glazes using gin (name gin_trgm_ops);
 create index glazes_code_trgm_idx on glazes using gin (code gin_trgm_ops);
 
 -- ------------------------------------------------------------------ cone overlap
--- Glazy got this wrong in a way worth not repeating: it tested whether a glaze's cone
--- endpoints fell inside the query range, so a cone 04-10 glaze was invisible to a
--- "cone 6" search -- the widest, most useful glazes vanished. Correct test is interval
--- overlap in both directions.
+-- The tempting version of this test is wrong. Asking whether a glaze's cone endpoints fall
+-- inside the query range makes a cone 04-10 glaze invisible to a "cone 6" search, so the
+-- widest and most broadly useful glazes are exactly the ones that vanish. The correct test is
+-- interval overlap, in both directions.
 create function cone_overlaps(
   glaze_from smallint, glaze_to smallint, q_from smallint, q_to smallint
 ) returns boolean language sql immutable parallel safe as $$
@@ -132,9 +132,9 @@ language sql stable parallel safe as $$
   left join cones         ct on ct.id = t.cone_to_id
   left join surfaces      sf on sf.id = t.surface_id
   left join opacities     op on op.id = t.opacity_id
-  -- LATERAL, not a join-then-paginate. Joining appearances directly would multiply a
-  -- glaze by its photo count and inflate every LIMIT and total -- exactly the bug that
-  -- made glazy's colour search return the wrong page sizes.
+  -- LATERAL, not a join-then-paginate. Joining appearances directly multiplies a glaze by
+  -- its photo count, which inflates every LIMIT and every total -- a glaze with three photos
+  -- silently consumes three result slots.
   left join lateral (
     select
       (array_agg(i.storage_path order by

@@ -49,8 +49,9 @@ insert into manufacturers (key, name, site_url) values
   ('amaco', 'AMACO (American Art Clay Co.)', 'https://shop.amaco.com');
 
 -- ------------------------------------------------------------------------- surfaces
--- A flat list on purpose. Glazy modelled surface twice -- once as a lookup table and
--- again as branches of its material-type tree -- and the two disagreed.
+-- A flat list on purpose, and the only place surface is modelled. Encoding it twice --
+-- once as a lookup table and again as branches of a category tree -- guarantees the two
+-- eventually disagree, and then neither can be trusted.
 create table surfaces (
   id   smallserial primary key,
   key  text not null unique,
