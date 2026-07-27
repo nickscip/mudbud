@@ -172,20 +172,64 @@ def storage_key(digest: str, prefix: str = "l") -> str:
 
 
 class MediaProcessor:
-    def __init__(self, client: httpx.AsyncClient, blobs: BlobStore) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        blobs: BlobStore,
+        *,
+        byte_cache: Path | None = None,
+    ) -> None:
         self._client = client
         self._blobs = blobs
+        # A directory of already-downloaded originals, keyed by content hash. Optional, and
+        # only consulted when the caller can say which hash to expect.
+        self._byte_cache = byte_cache
 
-    async def process(self, source_url: str, *, split_composite: bool = False) -> StoredImage:
+    async def _bytes_for(self, source_url: str, known_sha256: str | None) -> bytes:
+        """Prefer local bytes over the network.
+
+        The storage key is derived from the content hash, so `process` cannot ask the blob
+        store whether it already holds an image without first having the image — which is why
+        the naive version re-downloads the whole corpus every run. When the caller already
+        knows the hash (the database records one per source URL), that circularity breaks and
+        the download is skipped entirely.
+
+        This matters beyond speed: without it, migrating storage backends means re-requesting
+        ~1300 images from the manufacturer's CDN for bytes we already have.
+        """
+        if known_sha256 and self._byte_cache is not None:
+            cached = self._byte_cache / storage_key(known_sha256, "orig")
+            if cached.exists():
+                data = cached.read_bytes()
+                if sha256_bytes(data) == known_sha256:
+                    log.debug("media.from_cache", sha256=known_sha256[:12])
+                    return data
+                # A hash mismatch means the cache is stale, not that the image changed.
+                log.warning("media.cache_mismatch", sha256=known_sha256[:12])
+
+        response = await self._client.get(source_url)
+        response.raise_for_status()
+        data = response.content
+        if self._byte_cache is not None:
+            target = self._byte_cache / storage_key(sha256_bytes(data), "orig")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        return data
+
+    async def process(
+        self,
+        source_url: str,
+        *,
+        split_composite: bool = False,
+        known_sha256: str | None = None,
+    ) -> StoredImage:
         """Download once, derive sizes, measure colour.
 
         Colour is measured from the `m` derivative rather than the original: 640px is
         ample for a two-cluster k-means, and it keeps the measurement independent of
         whatever resolution AMACO happened to upload.
         """
-        response = await self._client.get(source_url)
-        response.raise_for_status()
-        data = response.content
+        data = await self._bytes_for(source_url, known_sha256)
         digest = sha256_bytes(data)
 
         try:

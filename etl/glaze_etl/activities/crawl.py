@@ -162,7 +162,11 @@ async def ingest_snapshot(payload: IngestInput) -> IngestOutput:
             headers={"User-Agent": adapter.politeness.user_agent},
         ) as client:
             media = (
-                MediaProcessor(client, _blob_store(settings, payload.manufacturer))
+                MediaProcessor(
+                    client,
+                    _blob_store(settings, payload.manufacturer),
+                    byte_cache=settings.blob_dir,
+                )
                 if payload.with_images
                 else None
             )

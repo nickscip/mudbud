@@ -127,3 +127,83 @@ class TestFailures:
 
         with pytest.raises(httpx.HTTPStatusError):
             await processor.process(URL)
+
+
+class TestByteCache:
+    """The storage key is a content hash, so the store cannot be asked whether it holds an
+    image without first having the image. When the caller already knows the hash — the
+    database records one per source URL — that circularity breaks and the network is skipped.
+
+    Without this, migrating storage backends re-requests the whole corpus from the
+    manufacturer's CDN for bytes already on disk.
+    """
+
+    async def test_known_hash_is_served_from_cache_without_a_request(
+        self, tmp_path: Path
+    ) -> None:
+        payload = image_bytes()
+        digest = sha256_bytes(payload)
+        cache = tmp_path / "cache"
+        (cache / storage_key(digest, "orig")).parent.mkdir(parents=True)
+        (cache / storage_key(digest, "orig")).write_bytes(payload)
+
+        requested: list[str] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            requested.append(str(request.url))
+            return httpx.Response(200, content=payload)
+
+        processor = MediaProcessor(
+            httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+            LocalBlobStore(tmp_path / "blobs"),
+            byte_cache=cache,
+        )
+
+        stored = await processor.process(URL, known_sha256=digest)
+
+        assert requested == [], "hit the network despite a cached copy"
+        assert stored.sha256 == digest
+
+    async def test_unknown_hash_still_downloads(self, tmp_path: Path) -> None:
+        processor, _, requested = build(image_bytes(), tmp_path)
+        await processor.process(URL)
+        assert len(requested) == 1
+
+    async def test_download_populates_the_cache_for_next_time(self, tmp_path: Path) -> None:
+        payload = image_bytes()
+        cache = tmp_path / "cache"
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=payload)
+
+        processor = MediaProcessor(
+            httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+            LocalBlobStore(tmp_path / "blobs"),
+            byte_cache=cache,
+        )
+        stored = await processor.process(URL)
+        assert (cache / storage_key(stored.sha256, "orig")).exists()
+
+    async def test_stale_cache_entry_falls_back_to_the_network(self, tmp_path: Path) -> None:
+        """A hash mismatch means the cache is wrong, not that the source changed."""
+        payload = image_bytes()
+        digest = sha256_bytes(payload)
+        cache = tmp_path / "cache"
+        (cache / storage_key(digest, "orig")).parent.mkdir(parents=True)
+        (cache / storage_key(digest, "orig")).write_bytes(b"corrupted, wrong hash")
+
+        requested: list[str] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            requested.append(str(request.url))
+            return httpx.Response(200, content=payload)
+
+        processor = MediaProcessor(
+            httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+            LocalBlobStore(tmp_path / "blobs"),
+            byte_cache=cache,
+        )
+        stored = await processor.process(URL, known_sha256=digest)
+
+        assert len(requested) == 1, "should have re-fetched after the mismatch"
+        assert stored.sha256 == digest

@@ -294,7 +294,13 @@ def load(
                 headers={"User-Agent": adapter.politeness.user_agent},
             ) as client:
                 blobs = _blob_store(settings, blob_dir, adapter.manufacturer.value)
-                media = MediaProcessor(client, blobs) if images else None
+                # The local directory doubles as a byte cache even when blobs go to
+                # Supabase, so switching backends does not re-download the corpus.
+                media = (
+                    MediaProcessor(client, blobs, byte_cache=Path(blob_dir))
+                    if images
+                    else None
+                )
                 for url, fetched_at, status, etag, digest, body in rows:
                     snapshot = RawSnapshot(
                         url=url,

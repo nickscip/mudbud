@@ -234,6 +234,22 @@ class Loader:
         )
         return cursor.rowcount
 
+    def known_sha256(self, source_url: str) -> str | None:
+        """The content hash already recorded for this URL, if any.
+
+        Breaks the chicken-and-egg in MediaProcessor: the blob key is the content hash, so
+        without this it must download an image to discover whether it already has it.
+        """
+        row = self._conn.execute(
+            "select sha256 from glaze_images where source_url = %s and sha256 is not null "
+            "limit 1",
+            (source_url,),
+        ).fetchone()
+        if row is None:
+            return None
+        value = row[0]
+        return str(value) if value else None
+
     # ----------------------------------------------------------------- images
     def upsert_image(self, glaze_id: int, payload: ImagePayload) -> int:
         facts = payload.facts
