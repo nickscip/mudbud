@@ -41,6 +41,9 @@ export function CoatsStrip({ appearances }: Props) {
               hex={appearance.hex}
               size={104}
               rounded="lg"
+              crop={appearance.crop_bbox}
+              sourceWidth={appearance.image_width}
+              sourceHeight={appearance.image_height}
             />
             <Txt variant="label" className="mt-2 text-xs" numberOfLines={2}>
               {appearance.coat_level ?? "—"}

@@ -97,6 +97,9 @@ export default function GlazeDetailScreen() {
               hex={hero?.hex ?? glaze.hero_hex}
               size={128}
               rounded="lg"
+              crop={hero?.crop_bbox}
+              sourceWidth={hero?.image_width}
+              sourceHeight={hero?.image_height}
             />
             <View className="ml-4 flex-1">
               <Txt variant="label" className="text-xs text-clay-600">
@@ -238,6 +241,9 @@ function Section({
               hex={appearance.hex}
               size={132}
               rounded="lg"
+              crop={appearance.crop_bbox}
+              sourceWidth={appearance.image_width}
+              sourceHeight={appearance.image_height}
             />
             <Txt variant="label" className="mt-2 text-xs" numberOfLines={2}>
               {caption(appearance)}

@@ -45,6 +45,9 @@ export type GlazeHit = {
  * it does not apply. The UI shows what is known and stays quiet about the rest rather
  * than filling gaps with guesses.
  */
+/** A region of a source image, in that image's own pixels. */
+export type CropBox = { left: number; top: number; right: number; bottom: number };
+
 export type GlazeAppearance = {
   appearance_id: number;
   source_url: string;
@@ -68,6 +71,14 @@ export type GlazeAppearance = {
   hex2: string | null;
   confidence: "high" | "medium" | "low";
   credit: string | null;
+  /**
+   * Which part of `source_url` this appearance is of. Set for the coat tiles, which are three
+   * regions of one composite JPEG — without it the thickness strip shows the same wide
+   * photograph three times.
+   */
+  crop_bbox: CropBox | null;
+  image_width: number | null;
+  image_height: number | null;
 };
 
 export type GlazeFilters = {
