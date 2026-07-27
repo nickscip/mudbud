@@ -12,7 +12,7 @@ that AMACO has withdrawn simply leaves the link null instead of failing the load
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import psycopg
 import structlog
@@ -66,6 +66,19 @@ class LoadStats:
     layer_links: int = 0
 
 
+def _as_bbox(value: object) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(k): int(v) for k, v in value.items() if isinstance(v, int | float)}
+
+
+def _as_lab(*values: object) -> tuple[float, float, float] | None:
+    if any(v is None for v in values):
+        return None
+    numbers = [float(v) for v in values if isinstance(v, int | float)]
+    return (numbers[0], numbers[1], numbers[2]) if len(numbers) == 3 else None
+
+
 def _row_id(row: tuple[object, ...] | None) -> int:
     """Pull a RETURNING id out of a psycopg row with the type narrowed."""
     assert row is not None, "expected a RETURNING row"
@@ -88,9 +101,7 @@ class Loader:
             return None
 
         cone_range = CATEGORY_CONE_RANGE.get(product.cone_category or "")
-        if cone_range is None and product.cone_category and not self._reported_category(
-            product.line_code
-        ):
+        if cone_range is None and product.cone_category:
             # Better to leave the range null and say so than to guess endpoints. A null
             # range matches every cone query, so the glaze stays findable meanwhile.
             self.record_issue(
@@ -199,19 +210,6 @@ class Loader:
         self.stats.glazes += 1
         return _row_id(row)
 
-    def _reported_category(self, line_code: str) -> bool:
-        """True if this line already has an open issue. The category is a property of the
-        line, so filing one per product in it turned 2 real gaps into 80 rows of noise."""
-        row = self._conn.execute(
-            """
-            select 1 from parse_issues
-            where kind = 'unmapped_cone_category' and subject = %s and resolved_at is null
-            limit 1
-            """,
-            (line_code,),
-        ).fetchone()
-        return row is not None
-
     def inherit_line_cones(self) -> int:
         """Give every glaze a cone range, falling back to its line's.
 
@@ -286,12 +284,57 @@ class Loader:
         return _row_id(row)
 
     # ------------------------------------------------------------ appearances
+    def existing_pixel_data(self, image_id: int) -> tuple[RegionPayload, ...]:
+        """Coat regions already recorded for this image, with their measured colours.
+
+        Exists so a text-only reparse does not destroy pixel-derived data. Appearances mix two
+        sources: the filename grammar supplies cone, clay body, form and layering, while
+        splitting the image supplies coat thickness, crop boxes and colour. Since
+        replace_appearances rewrites a whole row set, running without image processing silently
+        collapsed 44 three-region composites into 44 single rows — observed twice, appearances
+        dropping 1325 -> 1237 both times.
+
+        Carrying the pixel side forward means `reparse` updates exactly what it re-derived.
+        """
+        rows = self._conn.execute(
+            """
+            select cl.key, a.crop_bbox, a.hex, a.hex2,
+                   a.lab_l, a.lab_a, a.lab_b, a.lab2_l, a.lab2_a, a.lab2_b
+            from appearances a
+            join coat_levels cl on cl.id = a.coat_level_id
+            where a.image_id = %s and a.crop_bbox is not null
+            order by cl.ordinal
+            """,
+            (image_id,),
+        ).fetchall()
+        out: list[RegionPayload] = []
+        for row in rows:
+            key, bbox, hex1, hex2 = row[0], row[1], row[2], row[3]
+            out.append(
+                RegionPayload(
+                    coat_level=CoatLevel(str(key)),
+                    crop_bbox=_as_bbox(bbox),
+                    hex_dominant=str(hex1) if hex1 else None,
+                    hex_secondary=str(hex2) if hex2 else None,
+                    lab=_as_lab(row[4], row[5], row[6]),
+                    lab_secondary=_as_lab(row[7], row[8], row[9]),
+                )
+            )
+        return tuple(out)
+
     def replace_appearances(self, glaze_id: int, image_id: int, payload: ImagePayload) -> int:
         """Rewrite this image's appearances.
 
         Delete-then-insert rather than upsert: an appearance has no natural key, and a
         grammar improvement can legitimately change how many rows one image yields.
         """
+        if not payload.regions and payload.lab is None:
+            # No pixels were processed this run, so anything the pixels produced must be
+            # carried over rather than dropped.
+            carried = self.existing_pixel_data(image_id)
+            if carried:
+                payload = replace(payload, regions=carried)
+
         self._conn.execute("delete from appearances where image_id = %s", (image_id,))
 
         facts = payload.facts
@@ -421,11 +464,32 @@ class Loader:
     def record_issue(
         self, manufacturer: str, kind: str, subject: str, detail: dict[str, object]
     ) -> None:
+        """File a review item, once per (kind, subject) while it stays unresolved.
+
+        Deduped because the crawl is scheduled: without it every weekly run re-filed the same
+        findings and the queue grew without bound, making its size meaningless. Observed as 32
+        `composite_unsplit` rows for 16 composites after two loads.
+
+        Detail is refreshed on an existing row rather than ignored, so the newest reason wins —
+        a refusal reason can change as the code changes.
+        """
         self._conn.execute(
             """
+            with m as (select id from manufacturers where key = %(manufacturer)s),
+            existing as (
+              update parse_issues set detail = %(detail)s
+              where kind = %(kind)s and subject = %(subject)s and resolved_at is null
+              returning id
+            )
             insert into parse_issues (manufacturer_id, kind, subject, detail)
-            select m.id, %s, %s, %s from manufacturers m where m.key = %s
+            select m.id, %(kind)s, %(subject)s, %(detail)s from m
+            where not exists (select 1 from existing)
             """,
-            (kind, subject, Json(detail), manufacturer),
+            {
+                "manufacturer": manufacturer,
+                "kind": kind,
+                "subject": subject,
+                "detail": Json(detail),
+            },
         )
         self.stats.issues += 1
