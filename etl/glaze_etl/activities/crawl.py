@@ -188,9 +188,9 @@ async def finalise(manufacturer: str) -> dict[str, int]:
 
 def _blob_store(settings: Settings) -> BlobStore:
     """Same rule as the CLI: hosted private bucket when configured, local cache otherwise."""
-    if settings.supabase_url and settings.supabase_service_key:
+    if settings.supabase_url and settings.service_key:
         return SupabaseBlobStore(
-            settings.supabase_url, settings.supabase_service_key, settings.storage_bucket
+            settings.supabase_url, settings.service_key, settings.storage_bucket
         )
     return LocalBlobStore(settings.blob_dir)
 

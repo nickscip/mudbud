@@ -10,7 +10,7 @@ Skipped unless a scratch Postgres is reachable. To provide one:
         -p 55433:5432 postgres:16-alpine
     for f in ../supabase/migrations/*.sql; do
       docker exec -i mudbud-pgcheck psql -U postgres -v ON_ERROR_STOP=1 -q < "$f"; done
-    GLAZE_ETL_TEST_DSN=postgresql://postgres:x@127.0.0.1:55433/postgres uv run pytest
+    TEST_SUPABASE_DB_URL=postgresql://postgres:x@127.0.0.1:55433/postgres uv run pytest
 """
 
 from __future__ import annotations
@@ -28,8 +28,8 @@ from glaze_etl.core.store import (
     SnapshotStore,
 )
 
-DSN = os.environ.get("GLAZE_ETL_TEST_DSN")
-pytestmark = pytest.mark.skipif(not DSN, reason="GLAZE_ETL_TEST_DSN not set")
+DSN = os.environ.get("TEST_SUPABASE_DB_URL")
+pytestmark = pytest.mark.skipif(not DSN, reason="TEST_SUPABASE_DB_URL not set")
 
 URL = "https://shop.amaco.com/pc-20-blue-rutile/"
 BASE = datetime(2026, 7, 26, 12, 0, tzinfo=UTC)

@@ -219,10 +219,10 @@ def _blob_store(settings: Settings, blob_dir: str) -> BlobStore:
     Chosen by whether credentials exist rather than by a flag, so the same command works in
     development and against a real project without anyone remembering to pass anything.
     """
-    if settings.supabase_url and settings.supabase_service_key:
+    if settings.supabase_url and settings.service_key:
         log.info("blobs.supabase", bucket=settings.storage_bucket)
         return SupabaseBlobStore(
-            settings.supabase_url, settings.supabase_service_key, settings.storage_bucket
+            settings.supabase_url, settings.service_key, settings.storage_bucket
         )
     log.info("blobs.local", path=blob_dir)
     return LocalBlobStore(Path(blob_dir))

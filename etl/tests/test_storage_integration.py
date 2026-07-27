@@ -3,8 +3,8 @@
 Skipped unless credentials are present. To run against the local stack:
 
     supabase start
-    GLAZE_ETL_TEST_SUPABASE_URL=http://127.0.0.1:54321 \
-    GLAZE_ETL_TEST_SERVICE_KEY=<service_role key from `supabase status`> \
+    TEST_SUPABASE_URL=http://127.0.0.1:54321 \
+    TEST_SUPABASE_SERVICE_KEY=<service_role key from `supabase status`> \
     uv run pytest tests/test_storage_integration.py
 
 The privacy assertion is the important one: these are AMACO's photographs, and caching them
@@ -22,10 +22,10 @@ import pytest
 
 from glaze_etl.core.media import SupabaseBlobStore, storage_key
 
-URL = os.environ.get("GLAZE_ETL_TEST_SUPABASE_URL")
-KEY = os.environ.get("GLAZE_ETL_TEST_SERVICE_KEY")
+URL = os.environ.get("TEST_SUPABASE_URL")
+KEY = os.environ.get("TEST_SUPABASE_SERVICE_KEY")
 pytestmark = pytest.mark.skipif(
-    not (URL and KEY), reason="GLAZE_ETL_TEST_SUPABASE_URL / _SERVICE_KEY not set"
+    not (URL and KEY), reason="TEST_SUPABASE_URL / _SERVICE_KEY not set"
 )
 
 PAYLOAD = b"\xff\xd8\xff\xe0" + b"fake jpeg bytes" * 8
