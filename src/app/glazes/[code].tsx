@@ -5,7 +5,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useLiveQuery } from "drizzle-orm/expo-sqlite";
+
 import { Txt } from "@/components/AppText";
+import { ImageViewer, type ViewerImage } from "@/components/ImageViewer";
+import { MarkToggles } from "@/components/MarkToggles";
 import { CoatsStrip } from "@/components/CoatsStrip";
 import { EmptyState } from "@/components/EmptyState";
 import { PressableScale } from "@/components/PressableScale";
@@ -20,6 +24,7 @@ import {
   type GlazeAppearance,
   type GlazeHit,
 } from "@/lib/glazes";
+import { glazeMarkQuery, toggleGlazeMark } from "@/db/repo";
 import { colors } from "@/theme/tokens";
 
 export default function GlazeDetailScreen() {
@@ -30,6 +35,10 @@ export default function GlazeDetailScreen() {
   const [appearances, setAppearances] = useState<GlazeAppearance[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<ViewerImage | null>(null);
+
+  // Marks live in local SQLite, so they resolve instantly and work with no signal.
+  const { data: mark } = useLiveQuery(glazeMarkQuery(code ?? ""));
 
   useEffect(() => {
     if (!code) return;
@@ -93,6 +102,17 @@ export default function GlazeDetailScreen() {
       >
         <View className="px-4">
           <View className="flex-row items-end">
+            <PressableScale
+              onPress={() =>
+                hero &&
+                setViewing({
+                  uri: hero.source_url,
+                  caption: glaze.name,
+                  credit: hero.credit,
+                })
+              }
+              accessibilityLabel="Enlarge photograph"
+            >
             <SwatchTile
               uri={hero?.source_url}
               hex={hero?.hex ?? glaze.hero_hex}
@@ -102,6 +122,7 @@ export default function GlazeDetailScreen() {
               sourceWidth={hero?.image_width}
               sourceHeight={hero?.image_height}
             />
+            </PressableScale>
             <View className="ml-4 flex-1">
               <Txt variant="label" className="text-xs text-clay-600">
                 {glaze.line_name ?? glaze.line_code}
@@ -113,6 +134,17 @@ export default function GlazeDetailScreen() {
                 {describeConeRange(glaze.cone_from, glaze.cone_to)}
               </Txt>
             </View>
+          </View>
+
+          <View className="mt-4">
+            <MarkToggles
+              owned={mark?.owned ?? false}
+              favorite={mark?.favorite ?? false}
+              onToggleOwned={() => void toggleGlazeMark(glaze.code, "owned", glaze.name)}
+              onToggleFavorite={() =>
+                void toggleGlazeMark(glaze.code, "favorite", glaze.name)
+              }
+            />
           </View>
 
           <View className="mt-4 flex-row flex-wrap">
@@ -183,6 +215,7 @@ export default function GlazeDetailScreen() {
             subtitle="Same glaze, different body"
             appearances={grouped.onClay}
             caption={(a) => a.clay_body ?? ""}
+            onEnlarge={setViewing}
           />
         ) : null}
 
@@ -194,6 +227,7 @@ export default function GlazeDetailScreen() {
             caption={(a) =>
               `over ${a.layered_over_code}${a.cone ? ` · cone ${a.cone}` : ""}`
             }
+            onEnlarge={setViewing}
           />
         ) : null}
 
@@ -202,8 +236,11 @@ export default function GlazeDetailScreen() {
             title="Also photographed"
             appearances={grouped.plain.slice(1)}
             caption={(a) => a.form ?? a.role.replace(/_/g, " ")}
+            onEnlarge={setViewing}
           />
         ) : null}
+
+        <ImageViewer image={viewing} onClose={() => setViewing(null)} />
 
         {/* Attribution is not decoration. These are AMACO's photographs. */}
         <View className="mt-8 px-4">
@@ -231,11 +268,13 @@ function Section({
   subtitle,
   appearances,
   caption,
+  onEnlarge,
 }: {
   title: string;
   subtitle?: string;
   appearances: GlazeAppearance[];
   caption: (appearance: GlazeAppearance) => string;
+  onEnlarge: (image: ViewerImage) => void;
 }) {
   return (
     <View className="mt-7">
@@ -252,6 +291,16 @@ function Section({
       >
         {appearances.map((appearance) => (
           <View key={appearance.appearance_id} className="mr-3" style={{ width: 132 }}>
+            <PressableScale
+              onPress={() =>
+                onEnlarge({
+                  uri: appearance.source_url,
+                  caption: caption(appearance),
+                  credit: appearance.credit,
+                })
+              }
+              accessibilityLabel="Enlarge photograph"
+            >
             <SwatchTile
               uri={appearance.source_url}
               hex={appearance.hex}
@@ -261,6 +310,7 @@ function Section({
               sourceWidth={appearance.image_width}
               sourceHeight={appearance.image_height}
             />
+            </PressableScale>
             <Txt variant="label" className="mt-2 text-xs" numberOfLines={2}>
               {caption(appearance)}
             </Txt>

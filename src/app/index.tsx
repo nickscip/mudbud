@@ -67,13 +67,29 @@ export default function ShelfScreen() {
                   The shelf
                 </Txt>
               </View>
-              <PressableScale
-                onPress={newPiece}
-                className="mt-1 h-12 w-12 items-center justify-center rounded-full"
-                style={{ backgroundColor: colors.clay[500] }}
-              >
-                <Ionicons name="add" size={26} color={colors.porcelain} />
-              </PressableScale>
+              <View className="mt-1 flex-row items-center">
+                {/* The glaze catalog is the app's other half, and the shelf is the only
+                    screen you land on — without a way through, it is unreachable. Quiet
+                    and secondary: documenting a piece is still the primary action. */}
+                <PressableScale
+                  onPress={() => router.push("/glazes")}
+                  className="mr-2 h-12 w-12 items-center justify-center rounded-full border border-stone-200"
+                  style={{ backgroundColor: colors.stone[50] }}
+                >
+                  <Ionicons
+                    name="color-palette-outline"
+                    size={22}
+                    color={colors.glaze[700]}
+                  />
+                </PressableScale>
+                <PressableScale
+                  onPress={newPiece}
+                  className="h-12 w-12 items-center justify-center rounded-full"
+                  style={{ backgroundColor: colors.clay[500] }}
+                >
+                  <Ionicons name="add" size={26} color={colors.porcelain} />
+                </PressableScale>
+              </View>
             </View>
           </View>
         }

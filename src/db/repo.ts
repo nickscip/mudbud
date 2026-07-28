@@ -1,6 +1,6 @@
 import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "./client";
-import { pieces, entries, media } from "./schema";
+import { pieces, entries, media, glazeMarks } from "./schema";
 import { createId } from "@/lib/id";
 import { persistMedia, deleteMediaFile } from "@/lib/media";
 import type { StageKey, PieceStatus } from "@/theme/tokens";
@@ -171,4 +171,62 @@ function advanceStatus(
   const derived = statusForStage(stage);
   if (!derived) return base;
   return STATUS_RANK[derived] > STATUS_RANK[base] ? derived : base;
+}
+
+/* --------------------------------- glaze marks -------------------------------- */
+// Owned / favourite flags on catalog glazes. Local and offline by design — see the
+// glazeMarks table comment.
+
+export function glazeMarksQuery() {
+  return db.query.glazeMarks.findMany({ orderBy: [desc(glazeMarks.updatedAt)] });
+}
+
+export function glazeMarkQuery(code: string) {
+  return db.query.glazeMarks.findFirst({ where: eq(glazeMarks.code, code) });
+}
+
+/**
+ * Flip one flag, creating the row if this glaze has never been marked.
+ *
+ * A row with both flags false is deleted rather than kept: "I unmarked this" and "I never
+ * marked this" are the same state, and keeping empty rows would make the marked-glazes list
+ * quietly wrong.
+ */
+export async function toggleGlazeMark(
+  code: string,
+  field: "owned" | "favorite",
+  name?: string
+): Promise<void> {
+  const existing = await db.query.glazeMarks.findFirst({
+    where: eq(glazeMarks.code, code),
+  });
+  const next = {
+    owned: existing?.owned ?? false,
+    favorite: existing?.favorite ?? false,
+    [field]: !(existing?.[field] ?? false),
+  };
+
+  if (!next.owned && !next.favorite) {
+    await db.delete(glazeMarks).where(eq(glazeMarks.code, code));
+    return;
+  }
+
+  await db
+    .insert(glazeMarks)
+    .values({
+      code,
+      owned: next.owned,
+      favorite: next.favorite,
+      name: name ?? existing?.name ?? null,
+      updatedAt: Date.now(),
+    })
+    .onConflictDoUpdate({
+      target: glazeMarks.code,
+      set: {
+        owned: next.owned,
+        favorite: next.favorite,
+        name: name ?? existing?.name ?? null,
+        updatedAt: Date.now(),
+      },
+    });
 }

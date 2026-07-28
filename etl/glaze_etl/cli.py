@@ -431,5 +431,46 @@ def sync(
     asyncio.run(run())
 
 
+@app.command()
+def report() -> None:
+    """Print catalog state as markdown. Used for the CI job summary."""
+    settings = Settings()
+    with db_connect(settings.database_url) as conn:
+        rows = conn.execute(
+            """
+            select
+              (select count(*) from glazes),
+              (select count(*) from appearances),
+              (select count(*) from appearances where coat_level_id is not null),
+              (select count(*) from appearances where clay_body_id is not null),
+              (select count(*) from appearances where layered_over_glaze_id is not null),
+              (select count(*) from glazes where cone_from_id is null),
+              (select count(*) from parse_issues where resolved_at is null)
+            """
+        ).fetchone()
+        assert rows is not None
+        issues = conn.execute(
+            "select kind, count(*) from parse_issues where resolved_at is null group by kind"
+        ).fetchall()
+
+    glazes, appearances, coats, clays, layered, no_cone, open_issues = rows
+    typer.echo("## Catalog\n")
+    typer.echo("| | |\n|---|---|")
+    for label, value in [
+        ("Glazes", glazes),
+        ("Appearances", appearances),
+        ("With coat thickness", coats),
+        ("With a clay body", clays),
+        ("Layering combinations", layered),
+        ("Missing a cone range", no_cone),
+        ("Open review items", open_issues),
+    ]:
+        typer.echo(f"| {label} | {value} |")
+    if issues:
+        typer.echo("\n### Review queue\n")
+        for kind, count in issues:
+            typer.echo(f"- `{kind}` x {count}")
+
+
 if __name__ == "__main__":
     app()

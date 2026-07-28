@@ -10,6 +10,8 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useLiveQuery } from "drizzle-orm/expo-sqlite";
+
 import { Txt } from "@/components/AppText";
 import { EmptyState } from "@/components/EmptyState";
 import { FilterChip } from "@/components/FilterChip";
@@ -22,6 +24,7 @@ import {
   type SearchResults,
 } from "@/lib/glazes";
 import { glazeCatalogConfigured } from "@/lib/supabase";
+import { glazeMarksQuery } from "@/db/repo";
 import { colors } from "@/theme/tokens";
 
 /** Cone presets, labelled the way a potter would say them. */
@@ -41,6 +44,15 @@ export default function GlazeSearchScreen() {
   const [term, setTerm] = useState("");
   const [conePreset, setConePreset] = useState<number | null>(null);
   const [foodSafeOnly, setFoodSafeOnly] = useState(false);
+  const [markFilter, setMarkFilter] = useState<"owned" | "favorite" | null>(null);
+
+  // Marks are local, so filtering by them happens here rather than in the RPC — the catalog
+  // has no idea what you own, and should not.
+  const { data: marks } = useLiveQuery(glazeMarksQuery());
+  const marksByCode = useMemo(
+    () => new Map((marks ?? []).map((m) => [m.code, m])),
+    [marks]
+  );
   const [results, setResults] = useState<SearchResults>({ matches: [], near: [] });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,8 +63,13 @@ export default function GlazeSearchScreen() {
       coneFrom: preset?.from,
       coneTo: preset?.to,
       foodSafeOnly,
+      // Sent to the server rather than applied to the page we already have, so an owned
+      // glaze ranked below the limit still shows up under its own filter.
+      codes: markFilter
+        ? (marks ?? []).filter((m) => m[markFilter]).map((m) => m.code)
+        : undefined,
     };
-  }, [conePreset, foodSafeOnly]);
+  }, [conePreset, foodSafeOnly, markFilter, marks]);
 
   // Debounced so typing does not fire a query per keystroke. The ref holds the timer so
   // a re-render mid-typing does not orphan it.
@@ -71,14 +88,22 @@ export default function GlazeSearchScreen() {
     }
   }, []);
 
+  const nothingMarked = markFilter !== null && (filters.codes?.length ?? 0) === 0;
+
   useEffect(() => {
     if (!glazeCatalogConfigured) return;
+    if (nothingMarked) {
+      // An empty code list would mean "no restriction" server-side, which would show the
+      // whole catalog under a filter that should show nothing.
+      setResults({ matches: [], near: [] });
+      return;
+    }
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => void run(term, filters), 250);
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [term, filters, run]);
+  }, [term, filters, run, nothingMarked]);
 
   const sections = useMemo<Section[]>(() => {
     const out: Section[] = [];
@@ -111,7 +136,7 @@ export default function GlazeSearchScreen() {
         <EmptyState
           icon="cloud-offline-outline"
           title="Catalog not connected"
-          body="Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY, then restart the dev server."
+          body="Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY, then restart the dev server."
         />
       </View>
     );
@@ -155,6 +180,16 @@ export default function GlazeSearchScreen() {
             selected={foodSafeOnly}
             onPress={() => setFoodSafeOnly((on) => !on)}
           />
+          <FilterChip
+            label="Owned"
+            selected={markFilter === "owned"}
+            onPress={() => setMarkFilter(markFilter === "owned" ? null : "owned")}
+          />
+          <FilterChip
+            label="Favorites"
+            selected={markFilter === "favorite"}
+            onPress={() => setMarkFilter(markFilter === "favorite" ? null : "favorite")}
+          />
         </ScrollView>
       </View>
 
@@ -193,6 +228,8 @@ export default function GlazeSearchScreen() {
             ) : (
               <GlazeCard
                 glaze={item.glaze}
+                owned={marksByCode.get(item.glaze.code)?.owned}
+                favorite={marksByCode.get(item.glaze.code)?.favorite}
                 onPress={() =>
                   router.push({
                     pathname: "/glazes/[code]",
@@ -206,11 +243,21 @@ export default function GlazeSearchScreen() {
             loading ? null : (
               <EmptyState
                 icon="color-palette-outline"
-                title={term ? "No glaze like that" : "Find a glaze"}
+                title={
+                  markFilter === "owned"
+                    ? "Nothing marked owned yet"
+                    : markFilter === "favorite"
+                      ? "No favourites yet"
+                      : term
+                        ? "No glaze like that"
+                        : "Find a glaze"
+                }
                 body={
-                  term
-                    ? "Try a colour word, or just the line code like PC or SM."
-                    : "Search by name, code, or colour — 'sage green' works as well as 'PC-20'."
+                  markFilter
+                    ? "Open a glaze and mark it — your marks stay on this device and work offline."
+                    : term
+                      ? "Try a colour word, or just the line code like PC or SM."
+                      : "Search by name, code, or colour — 'sage green' works as well as 'PC-20'."
                 }
               />
             )

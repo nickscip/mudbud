@@ -86,6 +86,12 @@ export type GlazeFilters = {
   coneTo?: number;
   foodSafeOnly?: boolean;
   clayBodyIds?: number[];
+  /**
+   * Restrict to these glaze codes. Used for the Owned / Favourites filters, whose source of
+   * truth is the device's own SQLite — filtering the already-fetched page instead would
+   * silently drop anything ranked below the limit.
+   */
+  codes?: string[];
 };
 
 export type SearchResults = {
@@ -110,6 +116,7 @@ export async function searchGlazes(
     p_cone_to: filters.coneTo ?? null,
     p_food_safe: filters.foodSafeOnly ? true : null,
     p_clay_body: filters.clayBodyIds?.length ? filters.clayBodyIds : null,
+    p_codes: filters.codes?.length ? filters.codes : null,
     p_limit: limit,
   });
 

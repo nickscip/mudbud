@@ -51,6 +51,14 @@ export function initDatabase() {
       created_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS glaze_marks (
+      code TEXT PRIMARY KEY NOT NULL,
+      owned INTEGER NOT NULL DEFAULT 0,
+      favorite INTEGER NOT NULL DEFAULT 0,
+      name TEXT,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_entries_piece ON entries (piece_id);
     CREATE INDEX IF NOT EXISTS idx_media_entry ON media (entry_id);
   `);

@@ -16,6 +16,8 @@ type Props = {
   className?: string;
   style?: StyleProp<ViewStyle>;
   hitSlop?: number;
+  /** Required for icon-only controls, which otherwise announce as an unlabelled button. */
+  accessibilityLabel?: string;
 };
 
 /**
@@ -32,6 +34,7 @@ export function PressableScale({
   className,
   style,
   hitSlop,
+  accessibilityLabel,
 }: Props) {
   const scale = useSharedValue(1);
   const animatedStyle = useAnimatedStyle(() => ({
@@ -42,6 +45,8 @@ export function PressableScale({
     <Pressable
       disabled={disabled}
       hitSlop={hitSlop}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
       onPressIn={() => {
         scale.value = withSpring(0.96, { damping: 18, stiffness: 320 });
       }}
