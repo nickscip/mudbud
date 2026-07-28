@@ -20,7 +20,8 @@ from collections.abc import Iterator
 import httpx
 import pytest
 
-from glaze_etl.core.media import SupabaseBlobStore, storage_key
+from glaze_etl.core.blob_store import SupabaseBlobStore
+from glaze_etl.core.media import storage_key
 
 URL = os.environ.get("TEST_SUPABASE_URL")
 KEY = os.environ.get("TEST_SUPABASE_SERVICE_KEY")

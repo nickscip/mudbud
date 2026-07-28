@@ -16,6 +16,7 @@ import psycopg
 import structlog
 import typer
 
+from glaze_etl.core.blob_store import BlobStore, LocalBlobStore, SupabaseBlobStore
 from glaze_etl.core.color import Lab
 from glaze_etl.core.color_namer import ColorNamer, ColorTerm
 from glaze_etl.core.config import Settings
@@ -23,7 +24,7 @@ from glaze_etl.core.db import connect as db_connect
 from glaze_etl.core.db import stored_object_keys
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome
 from glaze_etl.core.loader import Loader
-from glaze_etl.core.media import BlobStore, LocalBlobStore, MediaProcessor, SupabaseBlobStore
+from glaze_etl.core.media import MediaProcessor
 from glaze_etl.core.models import ManufacturerKey, ProductRef, RawSnapshot
 from glaze_etl.core.normalizer import Normalizer, load_vocabularies
 from glaze_etl.core.pipeline import ingest_product

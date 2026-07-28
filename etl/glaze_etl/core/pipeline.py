@@ -12,9 +12,10 @@ from dataclasses import dataclass
 import structlog
 
 from glaze_etl.core.color_namer import ColorNamer
-from glaze_etl.core.loader import ImagePayload, Loader, RegionPayload
+from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import MediaProcessor
 from glaze_etl.core.models import CoatLevel, ImageRole, ParsedProduct, RawSnapshot
+from glaze_etl.core.payloads import ImagePayload, RegionPayload
 from glaze_etl.core.source_adapter import SourceAdapter
 
 log = structlog.get_logger(__name__)

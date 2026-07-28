@@ -9,9 +9,9 @@ import httpx
 import pytest
 from PIL import Image
 
+from glaze_etl.core.blob_store import LocalBlobStore
 from glaze_etl.core.media import (
     DERIVATIVES,
-    LocalBlobStore,
     MediaProcessor,
     sha256_bytes,
     storage_key,
