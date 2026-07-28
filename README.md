@@ -1,7 +1,10 @@
 # Mudbud 🏺
 
 A pottery app for documenting a piece end-to-end — from wet clay on the wheel to
-out of the kiln. This is **Slice 1: Process Capture** (local-only, single user).
+out of the kiln. **Slice 1: Process Capture** (local-only, single user), plus a
+read-only **glaze catalog** scraped from the manufacturers.
+
+How the halves fit together: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Run it on your iPhone (no Xcode needed)
 
@@ -29,13 +32,26 @@ Core loop: **Shelf → Piece timeline → Add moment (capture) → Moment detail
   or library), pick the stage, write a note.
 - **Moment detail** (`src/app/entry/[id].tsx`) — swipeable media, video playback, notes.
 
-Everything is stored **locally** (SQLite + on-disk media) — no account, no network.
+And the glaze half:
+
+- **Glaze search** (`src/app/glazes/index.tsx`) — search by name, code or colour word,
+  filtered by cone, food safety, and what you own.
+- **Glaze detail** (`src/app/glazes/[code].tsx`) — how the glaze actually fires: coat
+  thickness thin → thick, on different clay bodies, layered over others.
+
+Your pieces are stored **locally** (SQLite + on-disk media) — no account, and they never
+leave the device. The glaze catalog is the one thing read over the network, and the app
+only ever reads it.
 
 ## Stack
 
-Expo SDK 57 (RN 0.86, React 19) · Expo Router · TypeScript · NativeWind (Tailwind) ·
+Expo SDK 54 (RN 0.81, React 19.1) · Expo Router · TypeScript · NativeWind (Tailwind) ·
 Reanimated 4 + Moti (motion) · expo-haptics (tactile feel) · expo-image (blurhash) ·
 expo-image-picker / expo-video (media) · expo-sqlite + Drizzle ORM · Fraunces + Inter.
+
+The catalog behind the glaze screens is a separate Python 3.12 project in `etl/` (uv,
+Temporal, Postgres/Supabase), excluded from the Expo bundle — see
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 Design system lives in `src/theme/tokens.ts` and `tailwind.config.js`.
 
@@ -52,4 +68,9 @@ Design system lives in `src/theme/tokens.ts` and `tailwind.config.js`.
 ```bash
 npx tsc --noEmit                 # types
 npx expo export --platform ios   # full bundle smoke test
+
+cd etl
+uv run ruff check .              # lint
+uv run mypy --strict glaze_etl   # types
+uv run pytest -q                 # pure stages; integration tests skip without TEST_SUPABASE_*
 ```
