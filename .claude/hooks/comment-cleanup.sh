@@ -10,7 +10,9 @@
 #      Files are edited in place and left unstaged, so the caller can review the diff.
 #
 #   2. PreToolUse hook on `git commit`: reads the hook payload on stdin, cleans the
-#      staged files and re-stages them so the commit picks the cleanup up.
+#      staged files and re-stages them so the commit picks the cleanup up. Note that
+#      re-staging adds each file whole, so a partially staged file (`git add -p`) has
+#      its remaining hunks swept into the commit as well.
 #
 # Always exits 0 — a missing `claude`, missing `jq` or a subagent failure must never
 # block a real commit.
