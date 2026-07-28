@@ -1,0 +1,85 @@
+name: Sync glaze catalog
+
+# Crawls the manufacturer's catalog and ingests only what changed.
+#
+# Chosen over a Temporal deployment deliberately: the workload is one serial pass a week whose
+# concurrency is capped at 1 by the source's own 10s crawl-delay, and it is already idempotent
+# and cheap to restart. Temporal Cloud starts at $100/mo and self-hosting means running a server
+# plus its database — neither earns its keep for a weekly cron. The Temporal workflows remain in
+# the repo for when the shape changes: several manufacturers in parallel, or a review gate.
+#
+# Budget: ~60 minutes a run, almost entirely the mandated delay. Private repos get 2,000 free
+# Actions minutes a month, so a weekly run uses roughly 14%.
+
+on:
+  schedule:
+    # Mondays 09:00 UTC. Any weekday is fine; the point is a quiet, predictable slot.
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Cap products (0 = whole catalog). Useful for a smoke run."
+        required: false
+        default: "0"
+      images:
+        description: "Download and measure images"
+        type: boolean
+        required: false
+        default: true
+
+# Two crawls at once would breach the crawl-delay the source asked for, so a run in progress is
+# never cancelled and a new one waits its turn.
+concurrency:
+  group: sync-catalog
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    # A full pass is ~60 min of waiting; this leaves room for retries without risking the 6h cap.
+    timeout-minutes: 180
+    defaults:
+      run:
+        working-directory: etl
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: etl/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Sync catalog
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        # No image cache is restored on purpose. A runner starts empty, but images are only
+        # fetched for products whose page actually changed, which in a steady week is close to
+        # none — so caching 259MB every run would cost more than it saves.
+        run: |
+          uv run glaze-etl sync \
+            --limit "${{ github.event.inputs.limit || 0 }}" \
+            ${{ github.event.inputs.images == 'false' && '--no-images' || '' }} \
+            | tee sync.log
+
+      - name: Report catalog state
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: uv run glaze-etl report >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-log
+          path: etl/sync.log
+          retention-days: 30
