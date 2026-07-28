@@ -1,0 +1,100 @@
+/**
+ * The glaze catalog's client contract.
+ *
+ * These types are hand-written to mirror the `search_glazes` and `glaze_appearances`
+ * return shapes. That RPC signature is the only thing the TypeScript app and the Python
+ * ETL share, so it is deliberately the one place a change has to be made twice — no
+ * codegen step to keep in sync, and no ORM pretending the two halves are one system.
+ */
+
+/** A search hit. `tier` is what splits the results into "Matches" and "Similar". */
+export type GlazeHit = {
+  id: number;
+  code: string;
+  name: string;
+  description: string | null;
+  line_code: string | null;
+  line_name: string | null;
+  manufacturer_key: string;
+  cone_from: string | null;
+  cone_to: string | null;
+  surface: string | null;
+  opacity: string | null;
+  color_terms: string[];
+  food_safe: boolean | null;
+  ap_seal: boolean | null;
+  price_min: number | null;
+  availability: string | null;
+  product_url: string;
+  hero_source_url: string | null;
+  hero_storage_path: string | null;
+  hero_hex: string | null;
+  coat_levels_available: number;
+  layering_count: number;
+  clay_bodies_shown: string[];
+  tier: "match" | "near";
+  rank: number;
+};
+
+/** A region of a source image, in that image's own pixels. */
+export type CropBox = { left: number; top: number; right: number; bottom: number };
+
+/**
+ * One condition a glaze was photographed in.
+ *
+ * Nulls are meaningful: they mean the manufacturer did not state that variable, not that
+ * it does not apply. The UI shows what is known and stays quiet about the rest rather
+ * than filling gaps with guesses.
+ */
+export type GlazeAppearance = {
+  appearance_id: number;
+  source_url: string;
+  storage_path: string | null;
+  role:
+    | "label_chip"
+    | "coats_composite"
+    | "layered"
+    | "in_use"
+    | "line_chart"
+    | "other";
+  cone: string | null;
+  coat_level: string | null;
+  coat_ordinal: number | null;
+  clay_body: string | null;
+  clay_family: string | null;
+  form: string | null;
+  layered_over_code: string | null;
+  layered_over_name: string | null;
+  hex: string | null;
+  hex2: string | null;
+  confidence: "high" | "medium" | "low";
+  credit: string | null;
+  /**
+   * Which part of `source_url` this appearance is of. Set for the coat tiles, which are three
+   * regions of one composite JPEG — without it the thickness strip shows the same wide
+   * photograph three times.
+   */
+  crop_bbox: CropBox | null;
+  image_width: number | null;
+  image_height: number | null;
+};
+
+export type GlazeFilters = {
+  coneFrom?: number;
+  coneTo?: number;
+  foodSafeOnly?: boolean;
+  clayBodyIds?: number[];
+  /**
+   * Restrict to these glaze codes. Used for the Owned / Favourites filters, whose source of
+   * truth is the device's own SQLite — filtering the already-fetched page instead would
+   * silently drop anything ranked below the limit.
+   */
+  codes?: string[];
+};
+
+export type SearchResults = {
+  matches: GlazeHit[];
+  near: GlazeHit[];
+};
+
+export type ConeOption = { id: number; name: string };

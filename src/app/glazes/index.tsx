@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -17,12 +17,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { FilterChip } from "@/components/FilterChip";
 import { GlazeCard } from "@/components/GlazeCard";
 import { ScreenHeader } from "@/components/ScreenHeader";
-import {
-  searchGlazes,
-  type GlazeFilters,
-  type GlazeHit,
-  type SearchResults,
-} from "@/lib/glazes";
+import { useGlazeSearch, type GlazeFilters, type GlazeHit } from "@/lib/glazes";
 import { glazeCatalogConfigured } from "@/lib/supabase";
 import { glazeMarksQuery } from "@/db/repo";
 import { colors } from "@/theme/tokens";
@@ -53,10 +48,6 @@ export default function GlazeSearchScreen() {
     () => new Map((marks ?? []).map((m) => [m.code, m])),
     [marks]
   );
-  const [results, setResults] = useState<SearchResults>({ matches: [], near: [] });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   const filters = useMemo<GlazeFilters>(() => {
     const preset = conePreset === null ? null : CONE_PRESETS[conePreset];
     return {
@@ -71,39 +62,12 @@ export default function GlazeSearchScreen() {
     };
   }, [conePreset, foodSafeOnly, markFilter, marks]);
 
-  // Debounced so typing does not fire a query per keystroke. The ref holds the timer so
-  // a re-render mid-typing does not orphan it.
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const run = useCallback(async (query: string, active: GlazeFilters) => {
-    setLoading(true);
-    setError(null);
-    try {
-      setResults(await searchGlazes(query, active));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Search failed");
-      setResults({ matches: [], near: [] });
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
+  // A mark filter with nothing marked must show nothing, so there is no query to make.
   const nothingMarked = markFilter !== null && (filters.codes?.length ?? 0) === 0;
 
-  useEffect(() => {
-    if (!glazeCatalogConfigured) return;
-    if (nothingMarked) {
-      // An empty code list would mean "no restriction" server-side, which would show the
-      // whole catalog under a filter that should show nothing.
-      setResults({ matches: [], near: [] });
-      return;
-    }
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => void run(term, filters), 250);
-    return () => {
-      if (timer.current) clearTimeout(timer.current);
-    };
-  }, [term, filters, run, nothingMarked]);
+  const { results, loading, error, retry } = useGlazeSearch(term, filters, {
+    enabled: glazeCatalogConfigured && !nothingMarked,
+  });
 
   const sections = useMemo<Section[]>(() => {
     const out: Section[] = [];
@@ -199,7 +163,7 @@ export default function GlazeSearchScreen() {
           title="Couldn't reach the catalog"
           body={error}
           actionLabel="Try again"
-          onAction={() => void run(term, filters)}
+          onAction={retry}
         />
       ) : (
         <FlatList

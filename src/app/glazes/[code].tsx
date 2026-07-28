@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { ActivityIndicator, Linking, ScrollView, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLiveQuery } from "drizzle-orm/expo-sqlite";
 
 import { Txt } from "@/components/AppText";
+import { AppearanceRail } from "@/components/AppearanceRail";
 import { ImageViewer, type ViewerImage } from "@/components/ImageViewer";
 import { MarkToggles } from "@/components/MarkToggles";
 import { CoatsStrip } from "@/components/CoatsStrip";
@@ -16,14 +17,7 @@ import { PressableScale } from "@/components/PressableScale";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { SwatchTile } from "@/components/SwatchTile";
 import { stripCode } from "@/components/GlazeCard";
-import {
-  describeConeRange,
-  fetchAppearances,
-  fetchGlaze,
-  groupAppearances,
-  type GlazeAppearance,
-  type GlazeHit,
-} from "@/lib/glazes";
+import { describeConeRange, useGlazeDetail } from "@/lib/glazes";
 import { glazeMarkQuery, toggleGlazeMark } from "@/db/repo";
 import { colors } from "@/theme/tokens";
 
@@ -31,40 +25,11 @@ export default function GlazeDetailScreen() {
   const { code } = useLocalSearchParams<{ code: string }>();
   const insets = useSafeAreaInsets();
 
-  const [glaze, setGlaze] = useState<GlazeHit | null>(null);
-  const [appearances, setAppearances] = useState<GlazeAppearance[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { glaze, appearances, grouped, loading, error } = useGlazeDetail(code);
   const [viewing, setViewing] = useState<ViewerImage | null>(null);
 
   // Marks live in local SQLite, so they resolve instantly and work with no signal.
   const { data: mark } = useLiveQuery(glazeMarkQuery(code ?? ""));
-
-  useEffect(() => {
-    if (!code) return;
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      try {
-        const [hit, rows] = await Promise.all([fetchGlaze(code), fetchAppearances(code)]);
-        if (!cancelled) {
-          setGlaze(hit);
-          setAppearances(rows);
-        }
-      } catch (caught) {
-        if (!cancelled) {
-          setError(caught instanceof Error ? caught.message : "Could not load glaze");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [code]);
-
-  const grouped = useMemo(() => groupAppearances(appearances), [appearances]);
 
   if (loading) {
     return (
@@ -210,7 +175,7 @@ export default function GlazeDetailScreen() {
         )}
 
         {grouped.onClay.length > 0 ? (
-          <Section
+          <AppearanceRail
             title="On different clays"
             subtitle="Same glaze, different body"
             appearances={grouped.onClay}
@@ -220,7 +185,7 @@ export default function GlazeDetailScreen() {
         ) : null}
 
         {grouped.layered.length > 0 ? (
-          <Section
+          <AppearanceRail
             title="Layered"
             subtitle="This glaze over another"
             appearances={grouped.layered}
@@ -232,7 +197,7 @@ export default function GlazeDetailScreen() {
         ) : null}
 
         {grouped.plain.length > 1 ? (
-          <Section
+          <AppearanceRail
             title="Also photographed"
             appearances={grouped.plain.slice(1)}
             caption={(a) => a.form ?? a.role.replace(/_/g, " ")}
@@ -258,64 +223,6 @@ export default function GlazeDetailScreen() {
             </View>
           </PressableScale>
         </View>
-      </ScrollView>
-    </View>
-  );
-}
-
-function Section({
-  title,
-  subtitle,
-  appearances,
-  caption,
-  onEnlarge,
-}: {
-  title: string;
-  subtitle?: string;
-  appearances: GlazeAppearance[];
-  caption: (appearance: GlazeAppearance) => string;
-  onEnlarge: (image: ViewerImage) => void;
-}) {
-  return (
-    <View className="mt-7">
-      <View className="mb-3 px-4">
-        <Txt variant="title" className="text-base">
-          {title}
-        </Txt>
-        {subtitle ? <Txt variant="caption">{subtitle}</Txt> : null}
-      </View>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 16 }}
-      >
-        {appearances.map((appearance) => (
-          <View key={appearance.appearance_id} className="mr-3" style={{ width: 132 }}>
-            <PressableScale
-              onPress={() =>
-                onEnlarge({
-                  uri: appearance.source_url,
-                  caption: caption(appearance),
-                  credit: appearance.credit,
-                })
-              }
-              accessibilityLabel="Enlarge photograph"
-            >
-            <SwatchTile
-              uri={appearance.source_url}
-              hex={appearance.hex}
-              size={132}
-              rounded="lg"
-              crop={appearance.crop_bbox}
-              sourceWidth={appearance.image_width}
-              sourceHeight={appearance.image_height}
-            />
-            </PressableScale>
-            <Txt variant="label" className="mt-2 text-xs" numberOfLines={2}>
-              {caption(appearance)}
-            </Txt>
-          </View>
-        ))}
       </ScrollView>
     </View>
   );
