@@ -1,0 +1,106 @@
+name: CI
+
+# Everything that can be checked without credentials or network access to the manufacturer.
+# The pure stages are the bulk of the pipeline and run against checked-in fixtures, so this
+# stays fast and needs no secrets — which also means it is safe on pull requests from forks.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  etl:
+    name: ETL — lint, types, tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: etl
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: etl/uv.lock
+
+      - run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Types
+        run: uv run mypy --strict glaze_etl
+
+      - name: Tests
+        # Integration tests skip themselves without TEST_SUPABASE_* set, so this covers the
+        # pure stages: the filename grammar, parser, colour naming and the splitter.
+        run: uv run pytest -q
+
+  schema:
+    name: Schema — migrations and SQL assertions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+        ports: ["5432:5432"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply every migration from scratch
+        # Against a bare postgres:16, not Supabase. That is the point: it caught a grants
+        # migration that assumed the `anon` role exists, which is true only on Supabase.
+        env:
+          PGPASSWORD: postgres
+        run: |
+          for f in supabase/migrations/*.sql; do
+            echo "-- $f"
+            psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+
+      - name: Search contract
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 \
+            -f supabase/tests/search_smoke.sql
+
+  app:
+    name: App — typecheck and bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Bundle
+        # Proves the app actually builds, which a typecheck alone does not — it is where a
+        # bad Metro config or a missing native module shows up.
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_placeholder
+        run: npx expo export --platform ios --output-dir /tmp/expo-export
