@@ -39,7 +39,6 @@ graph TD
   end
 
   glazes -->|"anon key, read only"| rpc
-  localdb -.->|"never leaves the device"| localdb
   io -->|"service role, writes"| tables
   io --> bucket
   glazes -.->|"signed URLs"| bucket

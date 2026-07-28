@@ -68,6 +68,10 @@ npx expo export --platform ios --output-dir /tmp/expo-export
 for f in supabase/migrations/*.sql; do psql ... -f "$f"; done   # see .github/workflows/ci.yml
 ```
 
+Do not reach for `npm run lint`. There is no ESLint config checked in, so `expo lint`
+scaffolds one and installs dev dependencies on first run — a gate that edits `package.json`
+is not a gate. `tsc` plus the bundle is the app's real check.
+
 Two things to know about what the fast gates actually cover: the ETL integration tests
 skip themselves without `TEST_SUPABASE_*` in the environment, so a green `pytest` locally
 proves the pure stages (filename grammar, parser, colour naming, splitter) and nothing
