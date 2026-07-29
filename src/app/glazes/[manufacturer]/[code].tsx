@@ -282,7 +282,7 @@ function CombosTab({ grouped, onEnlarge }: TabProps) {
     return (
       <View className="mt-6 px-4">
         <Txt variant="title" className="mb-1 text-base">
-          Layered pairs
+          Combos
         </Txt>
         <Txt variant="caption">No layering photographs for this glaze.</Txt>
       </View>
@@ -290,7 +290,7 @@ function CombosTab({ grouped, onEnlarge }: TabProps) {
   }
   return (
     <AppearanceRail
-      title="Layered pairs"
+      title="Combos"
       subtitle="Two glazes per photo — this one over another"
       appearances={grouped.layered}
       caption={(a) => `over ${a.layered_over_code}${a.cone ? ` · cone ${a.cone}` : ""}`}

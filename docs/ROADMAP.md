@@ -158,7 +158,7 @@ epic is filling the tabs out (D3–D7).
   - piece texture — **no source**. Nothing in `GlazeAppearance` describes the surface of
     the object photographed; `form` is the nearest field and it means shape, not texture.
 - **D4 · Combos tab** — **partial**, and F may upgrade it substantially. The tab exists
-  (D2) and is explicit about arity — titled "Layered pairs", subtitled "two glazes per
+  (D2), titled "Combos" and explicit about arity in its subtitle — "two glazes per
   photo" — because the 130 AMACO layering links are **pairs** (top over base), inferred
   from filenames. Mayco publishes combos as a first-class content type — four
   `glazecombo-sitemap*.xml` files exist (F15) — so combos may become sourced data rather
