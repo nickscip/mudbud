@@ -128,20 +128,24 @@ owned.
 
 ## Epic D — Glaze page restructure
 
-Goal: the detail screen is one long scroll (`src/app/glazes/[code].tsx`). Split it into a
-compact header plus tabs.
+Goal: split the detail screen (`src/app/glazes/[manufacturer]/[code].tsx`) — one long
+scroll until D1/D2 landed — into a compact header plus tabs. Done; what remains in this
+epic is filling the tabs out (D3–D7).
 
-- **D1 · Compact header** — **todo**. Image, brand, glaze name, price, save state, food
-  safety, translucent/opaque, types, description. Price is available now and unused on this
-  screen (`price_min`); brand is available now (`manufacturer_key`, though see F10 for the
-  missing display name). Cone stays in the header too — it is the first thing a potter
-  checks.
-- **D2 · Tab shell** — **todo**, spike first. No pager or tab-view package is installed,
-  and adding one must be checked against the Expo Go SDK 54 bundle before it is assumed.
-  The zero-dependency fallback is a segmented control plus conditional render; decide
-  after the spike, and note whether tab state belongs in the URL.
-- **D3 · Application tab** — **partial**. Existing: the coats strip, the on-different-clays
-  rail, cone. Wanted filters and their reality:
+- **D1 · Compact header** — **done**, minus "types". Image, brand + line, name, cone,
+  price (`From $…`, because `price_min` is the cheapest of several sizes), save state,
+  the spec chips, first line of the description. "Types" stayed out on purpose — what
+  "type" means is still an open decision below. Brand is `manufacturer_key` uppercased
+  (`manufacturerLabel`), an interim spelling that happens to be right for AMACO; F10's
+  display-name column replaces it.
+- **D2 · Tab shell** — **done**, the zero-dependency way. `SegmentedTabs` + conditional
+  render; Application / Combos / Photos. The pager-package question could not be answered
+  without a device in hand — bundling cleanly does not prove Expo Go ships the native
+  half — so no package. What that gives up is swipe-between-tabs; revisit if G5 lifts the
+  dev-client ban. Tab state is deliberately **not** in the URL: the shareable identity is
+  the glaze, and a deep link lands on the header and the default tab.
+- **D3 · Application tab** — **partial**. The tab itself exists now (D2); in it: the coats
+  strip, the on-different-clays rail, cone. Wanted filters and their reality:
   - coat — **blocked** by E4; the columns (`coat_level`, `coat_ordinal`,
     `coat_levels_available`) exist but are unpopulated for most glazes and the splitter
     fails safe.
@@ -153,13 +157,13 @@ compact header plus tabs.
     line is explicitly brush-coat-count based, so F may change this.
   - piece texture — **no source**. Nothing in `GlazeAppearance` describes the surface of
     the object photographed; `form` is the nearest field and it means shape, not texture.
-- **D4 · Combos tab** — **partial**, and F may upgrade it substantially. The layering rail
-  already exists and 130 AMACO layering links are loaded, but they are **pairs** (top over
-  base), inferred from filenames. Mayco publishes combos as a first-class content type —
-  four `glazecombo-sitemap*.xml` files exist (F15) — so combos may become sourced data
-  rather than inferred. Stacks of 3+ remain unverified. Build the tab filterable (by
-  partner glaze, cone, clay body) and be explicit in the UI about how many glazes a combo
-  involves.
+- **D4 · Combos tab** — **partial**, and F may upgrade it substantially. The tab exists
+  (D2) and is explicit about arity — titled "Layered pairs", subtitled "two glazes per
+  photo" — because the 130 AMACO layering links are **pairs** (top over base), inferred
+  from filenames. Mayco publishes combos as a first-class content type — four
+  `glazecombo-sitemap*.xml` files exist (F15) — so combos may become sourced data rather
+  than inferred. Stacks of 3+ remain unverified. Still to do: filters (by partner glaze,
+  cone, clay body).
 - **D5 · Ingredients tab** — **no source**, with one lead. AMACO does not publish recipes
   for commercial glazes; this is a trade secret, not a scraping gap. Mayco's sitemap index
   exposes `doc_cat` / `doc_tag` taxonomies, so technical documents may be reachable —
@@ -311,11 +315,12 @@ should stay. These are the ones that actually bind behaviour:
 
 - **F10 · Manufacturer identity plumbing** — **todo**. `ManufacturerKey` has exactly one
   member (`core/models.py:27`); add `MAYCO`. Add the `manufacturers` row by migration
-  (mirroring `20260726000100_vocabularies.sql:49`). Separately, the app hardcodes
-  attribution — "Photographs & data © AMACO" and "shop.amaco.com" at
-  `src/app/glazes/[code].tsx:217,220`, and `"Photograph © AMACO"` as the credit fallback at
+  (mirroring `20260726000100_vocabularies.sql:49`). The detail screen's attribution card is
+  no longer hardcoded — it derives from `manufacturer_key` (uppercased) and the
+  `product_url` host — but that spelling trick only works for AMACO, and
+  `"Photograph © AMACO"` is still the credit fallback at
   `src/components/ImageViewer.tsx:88`. `GlazeHit` carries `manufacturer_key` but no display
-  name or site URL, so the RPCs need to return them.
+  name or site URL, so the RPCs still need to return them.
 - **F11 · Discovery** — **todo**. Sitemap index → `product-sitemap*.xml`, honouring
   `lastmod` for `since`. Needs a non-glaze filter (chip charts, tools, kits) and a decision
   on whether to also enumerate `product_cat` / `product_line` for line assignment.
@@ -534,8 +539,9 @@ Not a commitment, just the dependency-respecting reading of the above.
 2. **G1 + G3** — hosted Supabase and a tunnelled Expo Go session. Small, and it turns
    "works on my laptop" into "works on my phone", which changes how everything else gets
    tested. Run G5's spike alongside, since its answer shapes G4–G8 and H5.
-3. **Ships now, no blockers, high value** — D1 header slim-down, D2 tab spike, D6 similar
-   glazes, D4 combos tab from the AMACO pairs already loaded.
+3. **Ships now, no blockers, high value** — ~~D1 header slim-down, D2 tab spike, D4 combos
+   tab from the AMACO pairs already loaded~~ (done: header, tab shell, and the pairs rail
+   as its own tab), D6 similar glazes.
 4. **The saving rework end to end** — C3 and C4 are what remain; C1 and C2 landed with F7.
    Self-contained, local, and the thing a user touches every session.
 5. **Epic F proper** — F1–F9 de-AMACO-ing, then F10–F14 for the adapter, then F15 combos.
