@@ -64,6 +64,16 @@ today they share one text box and four chips.
 - **A7 · Brand facet** — **blocked** by Epic F. `p_manufacturer` and `manufacturer_key` are
   both ready; cardinality is 1. A brand chip today filters nothing.
 - **A8 · Coat / application filters in search** — **blocked** by E4 (splitter).
+- **A9 · The `glaze_hit` projection is written twice** — **todo**, small, and cheaper than it
+  used to be. `search_glazes` and `glaze_by_code` repeat the same 24-column select list and the
+  same LATERAL evidence aggregate verbatim; the copy dates from `20260726000500`. Measured
+  before unifying anything: extraction cannot make it *faster* — Postgres inlines a view or a
+  simple SQL function, so the best case is an identical plan and the worst case is a call that
+  fails to inline and can no longer combine with `appearances_glaze_idx`. So this is a
+  maintainability change only, and it must be re-measured, not assumed.
+  What changed the economics: `20260728000200` means `search_glazes` now evaluates that block
+  at most `p_limit` times instead of once per candidate, so an extraction that did cost
+  something would cost far less of it.
 
 ## Epic B — Explore
 

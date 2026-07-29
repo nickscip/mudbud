@@ -16,6 +16,13 @@ name: Deploy schema
 # app mirrors RPC signatures by hand — see G10's ordering rule: migrate the database *before*
 # shipping a build that expects new parameters, and keep each migration safe to apply before the
 # new bundle ships (expand-contract), because OTA and TestFlight leave users on older bundles.
+#
+# NOT YET USABLE, and deliberately committed anyway. There is no hosted project until G1, so
+# neither GitHub environment exists and `SUPABASE_DB_URL` is unset — dispatching this today fails
+# on an unknown environment. It is here so the rule is in place before the first hosted database
+# is, rather than being written under pressure once one exists and someone reaches for psql.
+# To make it live: create a Supabase project, add `staging` and `production` environments (give
+# production a required reviewer), and set SUPABASE_DB_URL in each.
 
 on:
   workflow_dispatch:
