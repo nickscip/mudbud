@@ -20,6 +20,18 @@ cd "$(dirname "$0")/.."
 DSN="${1:?usage: apply-migrations.sh <dsn> [psql-binary]}"
 PSQL="${2:-psql}"
 
+# DDL takes an ACCESS EXCLUSIVE lock, and a lock request queues *ahead* of every later reader. So
+# against a live database an ALTER waiting behind one long-running query does not merely wait — it
+# stalls everything that arrives after it, and the app stops responding for reasons no single slow
+# query explains. Failing fast is strictly better: a migration that could not get its lock can be
+# retried in a quieter minute, whereas a wedged table cannot be un-wedged.
+#
+# Session-level via PGOPTIONS rather than a `set` inside each migration, so it applies however the
+# files are run and there is no per-file boilerplate to forget. Override for a migration that
+# genuinely needs to wait:
+#   MUDBUD_LOCK_TIMEOUT=30s scripts/apply-migrations.sh "$DSN"
+export PGOPTIONS="${PGOPTIONS:-} -c lock_timeout=${MUDBUD_LOCK_TIMEOUT:-5s}"
+
 count=0
 for f in supabase/migrations/*.sql; do
   if ! "$PSQL" "$DSN" -v ON_ERROR_STOP=1 -q -f "$f"; then

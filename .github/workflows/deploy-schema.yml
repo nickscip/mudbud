@@ -92,18 +92,29 @@ jobs:
         with:
           version: latest
 
-      - name: What does the hosted database think it has?
-        # Reconciliation before mutation. A ledger that disagrees with the files on disk means the
-        # next `db push` is guessing, and this is the cheapest moment to find that out.
+      - name: Does the database agree about its own history?
+        # Reconciliation before mutation. A ledger that disagrees with the files means the next
+        # `db push` is guessing — re-running a migration that already ran, or skipping one that did
+        # not — and this is the cheapest moment to find out.
+        #
+        # A version in the ledger with no file on disk fails here, because that is a deleted or
+        # renamed migration. Unrecorded files are the *expected* state before an apply: they are
+        # exactly what is about to run, so this step reports and the next one acts.
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           {
             echo "### Migration ledger — ${{ github.event.inputs.environment }}"
             echo '```'
+            scripts/check-migration-ledger.sh "$SUPABASE_DB_URL" 2>&1 || true
             supabase migration list --db-url "$SUPABASE_DB_URL"
             echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          if scripts/check-migration-ledger.sh "$SUPABASE_DB_URL" 2>&1 | grep -q '^unknown'; then
+            echo "::error::the ledger names a migration with no file — renamed or deleted" >&2
+            exit 1
+          fi
 
       - name: Apply
         if: ${{ github.event.inputs.dry_run != 'true' }}
@@ -111,7 +122,18 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         # `db push` records what it applies, which hand-run psql does not — that bookkeeping is the
         # difference between a database with a version and a database with a shape.
-        run: supabase db push --db-url "$SUPABASE_DB_URL"
+        #
+        # lock_timeout rides on the DSN because the CLI does not read PGOPTIONS. DDL takes an
+        # ACCESS EXCLUSIVE lock and a waiting lock request queues ahead of every later reader, so an
+        # ALTER stuck behind one long query stalls everything arriving after it and the app goes
+        # quiet for reasons no single slow query explains. Better to fail and retry in a quieter
+        # minute — a migration that did not get its lock is recoverable, a wedged table is not.
+        run: |
+          case "$SUPABASE_DB_URL" in
+            *\?*) sep='&' ;;
+            *)    sep='?' ;;
+          esac
+          supabase db push --db-url "${SUPABASE_DB_URL}${sep}options=-c%20lock_timeout%3D5s"
 
       - name: Assert the contract against the hosted database
         if: ${{ github.event.inputs.dry_run != 'true' }}
@@ -126,6 +148,8 @@ jobs:
         if: ${{ always() && github.event.inputs.dry_run != 'true' }}
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        # Now it must agree exactly — an unrecorded file after a push means something was applied
+        # without being written down, which is the drift this workflow exists to prevent.
         run: |
           {
             echo "### Ledger after"
@@ -133,3 +157,4 @@ jobs:
             supabase migration list --db-url "$SUPABASE_DB_URL"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          scripts/check-migration-ledger.sh "$SUPABASE_DB_URL"

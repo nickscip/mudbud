@@ -52,7 +52,35 @@ uses `supabase db push` so the migration ledger records what happened. Applying 
 `psql` is what left this repo's local database with five migrations applied but unrecorded
 and two never applied at all.
 
-## Two rules that are not enforced yet
+Migrations run with **`lock_timeout=5s`**, set on the session by
+`scripts/apply-migrations.sh` and on the DSN by `deploy-schema.yml`. DDL takes an
+`ACCESS EXCLUSIVE` lock and a *waiting* lock request queues ahead of every later reader, so
+an `ALTER` stuck behind one long query stalls everything that arrives after it — the app
+goes quiet for reasons no single slow query explains. Failing fast is recoverable; a wedged
+table is not. Override deliberately for a migration that genuinely needs to wait:
+
+```
+MUDBUD_LOCK_TIMEOUT=30s scripts/apply-migrations.sh "$DSN"
+```
+
+## Does the database agree about its own history?
+
+```
+scripts/check-migration-ledger.sh [dsn]
+```
+
+`supabase_migrations.schema_migrations` is how anything answers "what version is this
+database?". When it disagrees with the files, `supabase db push` re-runs a migration that
+already ran or skips one that did not. This is not hypothetical: the local stack was found
+with the ledger stopping at `20260726000500` while six later migrations were demonstrably
+applied, and two never applied at all — the app was calling an 11-argument `search_glazes`
+the repo had replaced twice.
+
+`--record` writes a version into the ledger **without applying it**, for the case where a
+migration provably ran but was not written down. Check the schema yourself first; recording
+something that never ran means it never will.
+
+## One rule that is not enforced, on purpose
 
 - **Expand-contract, before G6/G8 ship.** Dropping and recreating an RPC breaks any bundle
   still calling the old signature the instant it lands. With TestFlight and OTA updates,
@@ -60,6 +88,3 @@ and two never applied at all.
   ships and safe to leave in place if the app rolls back. Add the new shape alongside,
   migrate callers, drop the old one a release later. Free to ignore while there is one
   developer and no hosted project; not free afterwards.
-- **`lock_timeout` on DDL against a live database.** A migration that touches a table under
-  read load can queue behind an `AccessExclusiveLock` and wedge the app. Set a short
-  `lock_timeout` at the top and let it fail rather than block.
