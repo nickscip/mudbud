@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ActivityIndicator, Linking, ScrollView, View } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -17,13 +17,14 @@ import { PressableScale } from "@/components/PressableScale";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { SegmentedTabs } from "@/components/SegmentedTabs";
 import { SwatchTile } from "@/components/SwatchTile";
-import { stripCode } from "@/components/GlazeCard";
+import { GlazeCard, stripCode } from "@/components/GlazeCard";
 import {
   describeConeRange,
   describePriceFrom,
   manufacturerLabel,
   productHost,
   useGlazeDetail,
+  useSimilarGlazes,
   type GlazeRef,
   type GroupedAppearances,
 } from "@/lib/glazes";
@@ -36,12 +37,13 @@ import { colors } from "@/theme/tokens";
  * link should land on the header and the default tab, not on whatever tab the sender
  * happened to be reading.
  */
-type DetailTab = "application" | "combos" | "photos";
+type DetailTab = "application" | "combos" | "photos" | "similar";
 
 const DETAIL_TABS: { key: DetailTab; label: string }[] = [
   { key: "application", label: "Application" },
   { key: "combos", label: "Combos" },
   { key: "photos", label: "Photos" },
+  { key: "similar", label: "Similar" },
 ];
 
 export default function GlazeDetailScreen() {
@@ -190,6 +192,7 @@ export default function GlazeDetailScreen() {
         ) : null}
         {tab === "combos" ? <CombosTab grouped={grouped} onEnlarge={setViewing} /> : null}
         {tab === "photos" ? <PhotosTab grouped={grouped} onEnlarge={setViewing} /> : null}
+        {tab === "similar" ? <SimilarTab glazeRef={ref} /> : null}
 
         <ImageViewer image={viewing} onClose={() => setViewing(null)} />
 
@@ -302,6 +305,57 @@ function CombosTab({ grouped, onEnlarge }: TabProps) {
       caption={(a) => `over ${a.layered_over_code}${a.cone ? ` · cone ${a.cone}` : ""}`}
       onEnlarge={onEnlarge}
     />
+  );
+}
+
+/**
+ * Glazes that look like this one, each card a way out of a glaze that is not quite right.
+ * Named `glazeRef` because `ref` is a reserved prop. Marks are deliberately not shown here:
+ * this list answers "what else looks like this", not "what do I own".
+ */
+function SimilarTab({ glazeRef }: { glazeRef: GlazeRef }) {
+  const router = useRouter();
+  const { similars, loading, error } = useSimilarGlazes(glazeRef);
+
+  if (loading) {
+    return (
+      <View className="mt-10 items-center">
+        <ActivityIndicator color={colors.clay[500]} />
+      </View>
+    );
+  }
+  if (error) {
+    return <TabEmpty title="Similar glazes" body={error} />;
+  }
+  if (similars.length === 0) {
+    return (
+      <TabEmpty
+        title="Similar glazes"
+        body="Nothing in the catalog shares a colour or finish with this one."
+      />
+    );
+  }
+  return (
+    <View className="mt-6 px-4">
+      <Txt variant="title" className="mb-1 text-base">
+        Similar glazes
+      </Txt>
+      <Txt variant="caption" className="mb-3">
+        Shared colour and finish
+      </Txt>
+      {similars.map((hit) => (
+        <GlazeCard
+          key={hit.id}
+          glaze={hit}
+          onPress={() =>
+            router.push({
+              pathname: "/glazes/[manufacturer]/[code]",
+              params: { manufacturer: hit.manufacturer_key, code: hit.code },
+            })
+          }
+        />
+      ))}
+    </View>
   );
 }
 

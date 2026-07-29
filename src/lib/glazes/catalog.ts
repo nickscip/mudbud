@@ -84,6 +84,22 @@ export async function fetchGlaze(ref: GlazeRef): Promise<GlazeHit | null> {
   return ((data ?? []) as GlazeHit[])[0] ?? null;
 }
 
+/**
+ * Glazes that look like this one: shared colour terms first, then surface and opacity, with
+ * the manufacturer's line as a tie-break. The anchor takes the full ref and an unknown pair
+ * returns [] — never a guess. Results are not scoped to the anchor's brand on purpose:
+ * cross-brand similars are the payoff once a second manufacturer loads.
+ */
+export async function fetchSimilarGlazes(ref: GlazeRef, limit = 12): Promise<GlazeHit[]> {
+  const { data, error } = await supabase.rpc("similar_glazes", {
+    p_code: ref.code,
+    p_manufacturer: ref.manufacturer,
+    p_limit: limit,
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as GlazeHit[];
+}
+
 /** Cone ids are ordered by temperature, which is what makes the range filter work. */
 export async function fetchCones(): Promise<ConeOption[]> {
   const { data, error } = await supabase

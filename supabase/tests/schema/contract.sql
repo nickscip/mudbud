@@ -24,7 +24,7 @@ for got in
   from pg_proc p
   join pg_namespace ns on ns.oid = p.pronamespace
   where ns.nspname = 'public'
-    and p.proname in ('search_glazes', 'glaze_by_code', 'glaze_appearances')
+    and p.proname in ('search_glazes', 'glaze_by_code', 'glaze_appearances', 'similar_glazes')
   group by p.proname
   having count(*) > 1
 loop
@@ -35,9 +35,9 @@ select count(*) into n
 from pg_proc p
 join pg_namespace ns on ns.oid = p.pronamespace
 where ns.nspname = 'public'
-  and p.proname in ('search_glazes', 'glaze_by_code', 'glaze_appearances');
-if n <> 3 then
-  raise exception 'expected exactly 3 catalog RPCs, found %', n;
+  and p.proname in ('search_glazes', 'glaze_by_code', 'glaze_appearances', 'similar_glazes');
+if n <> 4 then
+  raise exception 'expected exactly 4 catalog RPCs, found %', n;
 end if;
 
 -- Both exact lookups must require the manufacturer. A code alone does not name a glaze
@@ -157,6 +157,7 @@ foreach got in array array[
   'search_glazes(text, smallint[], smallint[], smallint, smallint, smallint[], smallint[], boolean, smallint[], integer, integer, text[], text[])',
   'glaze_by_code(text, text)',
   'glaze_appearances(text, text)',
+  'similar_glazes(text, text, integer)',
   'cone_overlaps(smallint, smallint, smallint, smallint)',
   'text_array_to_string(text[])'
 ] loop

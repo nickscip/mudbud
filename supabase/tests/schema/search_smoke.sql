@@ -234,4 +234,50 @@ begin
   raise notice 'manufacturer-scoped identity: all assertions passed';
 end $$;
 
+-- similar_glazes. Fixture geometry the assertions lean on: the four amaco glazes share the PC
+-- line, so every amaco pair scores at least 1; PC-13 also shares "green" with PC-20; testco's
+-- PC-20 shares no terms and no line with amaco's, so it scores 0 and stays out.
+do $$
+declare n int; c text; mk text; hero text;
+begin
+  -- Colour overlap outranks line-only similarity.
+  select code, manufacturer_key, hero_source_url into c, mk, hero
+  from similar_glazes('PC-20', 'amaco') limit 1;
+  if c is distinct from 'PC-13' then
+    raise exception 'expected PC-13 as closest to PC-20, got %', c;
+  end if;
+  if hero is null then raise exception 'similar_glazes did not aggregate the hero image'; end if;
+
+  -- Zero-scored glazes stay out: testco's PC-20 shares nothing with amaco's.
+  select count(*) into n from similar_glazes('PC-20', 'amaco');
+  if n <> 3 then raise exception 'similar_glazes(PC-20, amaco) returned % rows, expected 3', n; end if;
+
+  -- The anchor is never its own similar.
+  select count(*) into n from similar_glazes('PC-20', 'amaco')
+  where code = 'PC-20' and manufacturer_key = 'amaco';
+  if n <> 0 then raise exception 'similar_glazes returned the anchor itself'; end if;
+
+  -- The anchor is resolved by (manufacturer, code): the other brand's PC-20 is a different
+  -- glaze with a different answer — here, no overlap with anything.
+  select count(*) into n from similar_glazes('PC-20', 'testco');
+  if n <> 0 then
+    raise exception 'similar_glazes(PC-20, testco) returned % rows for a disjoint glaze', n;
+  end if;
+
+  -- An unknown pair is a miss, never the closest hit.
+  select count(*) into n from similar_glazes('PC-20', 'nobody');
+  if n <> 0 then raise exception 'similar_glazes answered for an unknown manufacturer'; end if;
+
+  -- A different anchor reorders: LG-99 and PC-30 meet on "brown".
+  select code into c from similar_glazes('LG-99', 'amaco') limit 1;
+  if c is distinct from 'PC-30' then
+    raise exception 'expected PC-30 as closest to LG-99, got %', c;
+  end if;
+
+  select count(*) into n from similar_glazes('PC-20', 'amaco', 1);
+  if n <> 1 then raise exception 'p_limit ignored: got % rows', n; end if;
+
+  raise notice 'similar_glazes: all assertions passed';
+end $$;
+
 rollback;

@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { fetchAppearances, fetchGlaze, searchGlazes } from "./catalog";
+import { fetchAppearances, fetchGlaze, fetchSimilarGlazes, searchGlazes } from "./catalog";
 import { groupAppearances } from "./grouping";
 import type {
   GlazeAppearance,
@@ -121,4 +121,41 @@ export function useGlazeDetail(ref: GlazeRef | undefined) {
   const grouped = useMemo(() => groupAppearances(appearances), [appearances]);
 
   return { glaze, appearances, grouped, loading, error };
+}
+
+/**
+ * The "more like this" list for one glaze. Fetched by the tab that shows it rather than with
+ * the detail pair, so opening a glaze page costs two calls, not three — the tab mounts only
+ * when chosen, and this hook mounts with it.
+ */
+export function useSimilarGlazes(ref: GlazeRef | undefined) {
+  const [similars, setSimilars] = useState<GlazeHit[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const manufacturer = ref?.manufacturer;
+  const code = ref?.code;
+
+  useEffect(() => {
+    if (!manufacturer || !code) return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const rows = await fetchSimilarGlazes({ manufacturer, code });
+        if (!cancelled) setSimilars(rows);
+      } catch (caught) {
+        if (!cancelled) {
+          setError(caught instanceof Error ? caught.message : "Could not load similar glazes");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [manufacturer, code]);
+
+  return { similars, loading, error };
 }
