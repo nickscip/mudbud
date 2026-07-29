@@ -43,8 +43,7 @@ node --experimental-strip-types scripts/test-device-db.mjs
 
 Both run automatically before a push that touches `supabase/` or `src/db/`, once you have
 run `scripts/install-hooks.sh`. That hook exists because **CI here is advisory, not a
-gate**: required status checks need GitHub Pro or a public repository, so a red run does
-not block a merge on this repo.
+gate.
 
 A hosted database is only ever migrated by `.github/workflows/deploy-schema.yml`, never by
 hand. Its `apply` job `needs: verify`, so the container replay cannot be skipped, and it
