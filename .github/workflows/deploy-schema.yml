@@ -17,12 +17,24 @@ name: Deploy schema
 # shipping a build that expects new parameters, and keep each migration safe to apply before the
 # new bundle ships (expand-contract), because OTA and TestFlight leave users on older bundles.
 #
-# NOT YET USABLE, and deliberately committed anyway. There is no hosted project until G1, so
-# neither GitHub environment exists and `SUPABASE_DB_URL` is unset — dispatching this today fails
-# on an unknown environment. It is here so the rule is in place before the first hosted database
-# is, rather than being written under pressure once one exists and someone reaches for psql.
-# To make it live: create a Supabase project, add `staging` and `production` environments (give
-# production a required reviewer), and set SUPABASE_DB_URL in each.
+# A hosted project now exists and is loaded, and it got there without this workflow — which is
+# how the rule earned its first real test. Its `search_glazes` was found still at the 12-argument
+# shape from `20260727000200_filter_by_codes`, so `20260728000100` and `20260728000200` had never
+# been applied, and the app — which sends the 13th argument, `p_code_manufacturers` — failed every
+# search with PostgREST's `PGRST202`: "Could not find the function public.search_glazes(...) in the
+# schema cache". A missing migration reads to a user as a broken feature, and to a developer as a
+# cache problem.
+#
+# Because those earlier migrations were applied outside this workflow, the hosted ledger is unknown
+# until something reads it. That is what `dry_run: true` is for: it runs the verify job, prints
+# `check-migration-ledger.sh` and `supabase migration list` to the run summary, and stops before
+# mutating anything. **Always dispatch a dry run first and read that summary.** A ledger that lags
+# the schema makes the next `db push` re-run a migration that already ran; reconcile with
+# `check-migration-ledger.sh --record` before applying, not after.
+#
+# Setup this needs, once, before the first dispatch: `staging` and `production` GitHub environments
+# (give production a required reviewer), each carrying its own `SUPABASE_DB_URL` secret. Without
+# them the run fails on an unknown environment.
 
 on:
   workflow_dispatch:
