@@ -17,19 +17,25 @@ import { PressableScale } from "@/components/PressableScale";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { SwatchTile } from "@/components/SwatchTile";
 import { stripCode } from "@/components/GlazeCard";
-import { describeConeRange, useGlazeDetail } from "@/lib/glazes";
-import { glazeMarkQuery, toggleGlazeMark } from "@/db/repo";
+import { describeConeRange, useGlazeDetail, type GlazeRef } from "@/lib/glazes";
+import { glazeMarkQuery, setGlazeMarkState, toggleGlazeFavorite } from "@/db/repo";
 import { colors } from "@/theme/tokens";
 
 export default function GlazeDetailScreen() {
-  const { code } = useLocalSearchParams<{ code: string }>();
+  // Both halves of the identity come from the path, so neither can be missing the way an
+  // optional query parameter could be.
+  const { manufacturer, code } = useLocalSearchParams<{
+    manufacturer: string;
+    code: string;
+  }>();
   const insets = useSafeAreaInsets();
 
-  const { glaze, appearances, grouped, loading, error } = useGlazeDetail(code);
+  const ref: GlazeRef = { manufacturer, code };
+  const { glaze, appearances, grouped, loading, error } = useGlazeDetail(ref);
   const [viewing, setViewing] = useState<ViewerImage | null>(null);
 
   // Marks live in local SQLite, so they resolve instantly and work with no signal.
-  const { data: mark } = useLiveQuery(glazeMarkQuery(code ?? ""));
+  const { data: mark } = useLiveQuery(glazeMarkQuery(ref));
 
   if (loading) {
     return (
@@ -103,12 +109,10 @@ export default function GlazeDetailScreen() {
 
           <View className="mt-4">
             <MarkToggles
-              owned={mark?.owned ?? false}
+              state={mark?.state ?? null}
               favorite={mark?.favorite ?? false}
-              onToggleOwned={() => void toggleGlazeMark(glaze.code, "owned", glaze.name)}
-              onToggleFavorite={() =>
-                void toggleGlazeMark(glaze.code, "favorite", glaze.name)
-              }
+              onSetState={(next) => void setGlazeMarkState(ref, next, glaze.name)}
+              onToggleFavorite={() => void toggleGlazeFavorite(ref)}
             />
           </View>
 

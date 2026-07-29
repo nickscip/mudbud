@@ -3,6 +3,11 @@ name: CI
 # Everything that can be checked without credentials or network access to the manufacturer.
 # The pure stages are the bulk of the pipeline and run against checked-in fixtures, so this
 # stays fast and needs no secrets — which also means it is safe on pull requests from forks.
+#
+# The database jobs spin up a real Postgres and replay the whole migration history into it, so a
+# change to the schema is proven before any hosted project is touched. That ordering is the point:
+# a migration applied to a hosted database is not something you can take back, and the app and the
+# RPC signatures are hand-mirrored, so a mismatch is a runtime failure rather than a build error.
 
 on:
   push:
@@ -14,6 +19,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  guards:
+    name: Guards — append-only migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The check needs a merge base to compare against, which a shallow clone does not have.
+          fetch-depth: 0
+
+      - name: Migrations are append-only
+        # Editing a migration that has already run somewhere forks the schema silently: a fresh
+        # database gets the new text, an already-migrated one keeps the old, and CI passes either
+        # way. The fix is always to add another migration.
+        #
+        # The base matters: a PR compares against its target branch, but a push to main must
+        # compare against what main pointed at *before* the push — against origin/main it would be
+        # comparing the branch to itself, and the check could never fire on the one branch where
+        # an edited migration has certainly already run.
+        run: |
+          if [ -n "${{ github.base_ref }}" ]; then
+            git fetch --quiet origin "${{ github.base_ref }}"
+            base="origin/${{ github.base_ref }}"
+          elif git cat-file -e "${{ github.event.before }}" 2>/dev/null; then
+            base="${{ github.event.before }}"
+          else
+            # A brand-new branch has no before (all zeros), and a force-push may point at history
+            # this clone no longer reaches. The default branch is the only base left.
+            git fetch --quiet origin "${{ github.event.repository.default_branch }}"
+            base="origin/${{ github.event.repository.default_branch }}"
+          fi
+          scripts/check-migrations-append-only.sh "$base"
+
   etl:
     name: ETL — lint, types, tests
     runs-on: ubuntu-latest
@@ -21,6 +60,16 @@ jobs:
     defaults:
       run:
         working-directory: etl
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+        ports: ["5432:5432"]
 
     steps:
       - uses: actions/checkout@v4
@@ -38,19 +87,29 @@ jobs:
       - name: Types
         run: uv run mypy --strict glaze_etl
 
+      - name: Give the integration tests a schema to talk to
+        working-directory: .
+        env:
+          PGPASSWORD: postgres
+        run: scripts/apply-migrations.sh postgres://postgres:postgres@localhost:5432/postgres
+
       - name: Tests
-        # Integration tests skip themselves without TEST_SUPABASE_* set, so this covers the
-        # pure stages: the filename grammar, parser, colour naming and the splitter.
+        # TEST_SUPABASE_DB_URL is what takes SnapshotStore's Postgres tests out of skip: they were
+        # written against a real database and then never ran in CI, so the store's behaviour was
+        # only ever verified in memory. The Storage tests stay skipped — they need the Supabase
+        # Storage service, which a bare Postgres container is not.
+        env:
+          TEST_SUPABASE_DB_URL: postgres://postgres:postgres@localhost:5432/postgres
         run: uv run pytest -q
 
   schema:
-    name: Schema — migrations and SQL assertions
+    name: Schema — migrations and SQL contract
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:17-alpine
         env:
           POSTGRES_PASSWORD: postgres
         options: >-
@@ -61,26 +120,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply every migration from scratch
-        # Against a bare postgres:16, not Supabase. That is the point: it caught a grants
-        # migration that assumed the `anon` role exists, which is true only on Supabase.
+      - name: Replay every migration and assert the contract
+        # A *bare* Postgres, not Supabase. That is the point: it caught a grants migration that
+        # assumed the `anon` role exists, which is true only on Supabase. The privilege assertions
+        # in contract.sql skip themselves here for that reason and run locally against
+        # `supabase start`, where the role does exist.
+        #
+        # The major version is pinned to match the Supabase stack rather than left on whatever is
+        # convenient. Server versions disagree about catalog output — pg_get_function_identity_
+        # arguments() includes parameter names on 17 and not on older releases, which is why
+        # contract.sql compares oidvectortypes() instead — and testing on a version nothing runs
+        # only proves the schema works somewhere nobody deploys.
         env:
           PGPASSWORD: postgres
-        run: |
-          for f in supabase/migrations/*.sql; do
-            echo "-- $f"
-            psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q -f "$f"
-          done
-
-      - name: Search contract
-        env:
-          PGPASSWORD: postgres
-        run: |
-          psql -h localhost -U postgres -v ON_ERROR_STOP=1 \
-            -f supabase/tests/search_smoke.sql
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: scripts/verify-schema.sh
 
   app:
-    name: App — typecheck and bundle
+    name: App — typecheck, device DB, bundle
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -89,13 +146,20 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 22 for `node:sqlite` and type stripping, both of which the device-database test uses.
+          node-version: 22
           cache: npm
 
       - run: npm ci
 
       - name: Typecheck
         run: npx tsc --noEmit
+
+      - name: Device database
+        # The local schema has an upgrade path that only runs on a phone which installed the app
+        # before the change, so it is the least reachable and most destructive code in src/db.
+        # ddl.ts keeps those statements free of expo-sqlite so node:sqlite can run the real thing.
+        run: node --experimental-strip-types scripts/test-device-db.mjs
 
       - name: Bundle
         # Proves the app actually builds, which a typecheck alone does not — it is where a

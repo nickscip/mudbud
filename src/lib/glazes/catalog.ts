@@ -11,6 +11,7 @@ import type {
   GlazeAppearance,
   GlazeFilters,
   GlazeHit,
+  GlazeRef,
   SearchResults,
 } from "./types";
 
@@ -31,7 +32,13 @@ export async function searchGlazes(
     p_cone_to: filters.coneTo ?? null,
     p_food_safe: filters.foodSafeOnly ? true : null,
     p_clay_body: filters.clayBodyIds?.length ? filters.clayBodyIds : null,
-    p_codes: filters.codes?.length ? filters.codes : null,
+    // Two arrays matched by position, which is what the RPC unnests in step. Sending one
+    // without the other matches nothing server-side rather than matching every brand, so the
+    // pair is built in one place and never split.
+    p_codes: filters.marks?.length ? filters.marks.map((m) => m.code) : null,
+    p_code_manufacturers: filters.marks?.length
+      ? filters.marks.map((m) => m.manufacturer)
+      : null,
     p_limit: limit,
   });
 
@@ -44,8 +51,11 @@ export async function searchGlazes(
   };
 }
 
-export async function fetchAppearances(code: string): Promise<GlazeAppearance[]> {
-  const { data, error } = await supabase.rpc("glaze_appearances", { p_code: code });
+export async function fetchAppearances(ref: GlazeRef): Promise<GlazeAppearance[]> {
+  const { data, error } = await supabase.rpc("glaze_appearances", {
+    p_code: ref.code,
+    p_manufacturer: ref.manufacturer,
+  });
   if (error) throw new Error(error.message);
   return (data ?? []) as GlazeAppearance[];
 }
@@ -60,11 +70,16 @@ export async function fetchAppearances(code: string): Promise<GlazeAppearance[]>
  * near-tier collisions cluster (`C-5` against C-50/C-55/C-56), so it gets worse as the
  * catalog grows. Both calls now share one predicate.
  *
- * Returns null when the code genuinely is not in the catalog — never the closest hit, which
- * would be a wrong answer presented as a right one.
+ * Returns null when the ref genuinely is not in the catalog — never the closest hit, which
+ * would be a wrong answer presented as a right one. That is also why the manufacturer is part
+ * of the ref rather than optional: a code-only lookup can only pick a brand arbitrarily, and
+ * `[0]` of that result made the arbitrary choice look deliberate.
  */
-export async function fetchGlaze(code: string): Promise<GlazeHit | null> {
-  const { data, error } = await supabase.rpc("glaze_by_code", { p_code: code });
+export async function fetchGlaze(ref: GlazeRef): Promise<GlazeHit | null> {
+  const { data, error } = await supabase.rpc("glaze_by_code", {
+    p_code: ref.code,
+    p_manufacturer: ref.manufacturer,
+  });
   if (error) throw new Error(error.message);
   return ((data ?? []) as GlazeHit[])[0] ?? null;
 }

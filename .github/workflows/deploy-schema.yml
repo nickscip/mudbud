@@ -1,0 +1,160 @@
+name: Deploy schema
+
+# The only sanctioned way to change a hosted database.
+#
+# The point is the `needs:` edge, not the convenience. Applying migrations by hand is how a schema
+# drifts: this repo's own local database was found with DDL from five migrations applied but absent
+# from `supabase_migrations.schema_migrations`, and two function migrations never applied at all —
+# so `supabase migration list` reported a history that did not match the database. That is the
+# state where "it worked in CI" stops meaning anything.
+#
+# Structuring it as two jobs makes the containerized run unskippable: `apply` cannot start unless
+# `verify` succeeded in this same invocation. A green CI run on some earlier commit does not
+# qualify, which is the failure mode a required-status-check would still allow.
+#
+# Manual trigger on purpose. A schema change should be a decision with a person attached, and the
+# app mirrors RPC signatures by hand — see G10's ordering rule: migrate the database *before*
+# shipping a build that expects new parameters, and keep each migration safe to apply before the
+# new bundle ships (expand-contract), because OTA and TestFlight leave users on older bundles.
+#
+# NOT YET USABLE, and deliberately committed anyway. There is no hosted project until G1, so
+# neither GitHub environment exists and `SUPABASE_DB_URL` is unset — dispatching this today fails
+# on an unknown environment. It is here so the rule is in place before the first hosted database
+# is, rather than being written under pressure once one exists and someone reaches for psql.
+# To make it live: create a Supabase project, add `staging` and `production` environments (give
+# production a required reviewer), and set SUPABASE_DB_URL in each.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Which project to migrate"
+        type: choice
+        options: [staging, production]
+        required: true
+      dry_run:
+        description: "Report what would be applied, then stop"
+        type: boolean
+        default: true
+
+# One schema change at a time, and never cancel one in flight — a half-applied migration is the
+# thing this workflow exists to avoid.
+concurrency:
+  group: deploy-schema-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify against a container first
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+        ports: ["5432:5432"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Migrations are append-only
+        run: |
+          git fetch --quiet origin ${{ github.event.repository.default_branch }}
+          scripts/check-migrations-append-only.sh \
+            origin/${{ github.event.repository.default_branch }}
+
+      - name: Replay every migration and assert the contract
+        env:
+          PGPASSWORD: postgres
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: scripts/verify-schema.sh
+
+  apply:
+    name: Apply to ${{ github.event.inputs.environment }}
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # A GitHub environment can carry its own required reviewers and its own secrets, so production
+    # can demand an approval that staging does not.
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Does the database agree about its own history?
+        # Reconciliation before mutation. A ledger that disagrees with the files means the next
+        # `db push` is guessing — re-running a migration that already ran, or skipping one that did
+        # not — and this is the cheapest moment to find out.
+        #
+        # A version in the ledger with no file on disk fails here, because that is a deleted or
+        # renamed migration. Unrecorded files are the *expected* state before an apply: they are
+        # exactly what is about to run, so this step reports and the next one acts.
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          {
+            echo "### Migration ledger — ${{ github.event.inputs.environment }}"
+            echo '```'
+            scripts/check-migration-ledger.sh "$SUPABASE_DB_URL" 2>&1 || true
+            supabase migration list --db-url "$SUPABASE_DB_URL"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          if scripts/check-migration-ledger.sh "$SUPABASE_DB_URL" 2>&1 | grep -q '^unknown'; then
+            echo "::error::the ledger names a migration with no file — renamed or deleted" >&2
+            exit 1
+          fi
+
+      - name: Apply
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        # `db push` records what it applies, which hand-run psql does not — that bookkeeping is the
+        # difference between a database with a version and a database with a shape.
+        #
+        # lock_timeout rides on the DSN because the CLI does not read PGOPTIONS. DDL takes an
+        # ACCESS EXCLUSIVE lock and a waiting lock request queues ahead of every later reader, so an
+        # ALTER stuck behind one long query stalls everything arriving after it and the app goes
+        # quiet for reasons no single slow query explains. Better to fail and retry in a quieter
+        # minute — a migration that did not get its lock is recoverable, a wedged table is not.
+        run: |
+          case "$SUPABASE_DB_URL" in
+            *\?*) sep='&' ;;
+            *)    sep='?' ;;
+          esac
+          supabase db push --db-url "${SUPABASE_DB_URL}${sep}options=-c%20lock_timeout%3D5s"
+
+      - name: Assert the contract against the hosted database
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        # The same assertions the container ran, now against the real thing — where `anon` exists,
+        # so the privilege half actually executes here rather than skipping. This is the only place
+        # the grants the app depends on are ever really checked.
+        run: psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/schema/contract.sql
+
+      - name: Ledger after applying
+        if: ${{ always() && github.event.inputs.dry_run != 'true' }}
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        # Now it must agree exactly — an unrecorded file after a push means something was applied
+        # without being written down, which is the drift this workflow exists to prevent.
+        run: |
+          {
+            echo "### Ledger after"
+            echo '```'
+            supabase migration list --db-url "$SUPABASE_DB_URL"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          scripts/check-migration-ledger.sh "$SUPABASE_DB_URL"

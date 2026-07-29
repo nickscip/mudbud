@@ -15,6 +15,7 @@ import type {
   GlazeAppearance,
   GlazeFilters,
   GlazeHit,
+  GlazeRef,
   SearchResults,
 } from "./types";
 
@@ -70,20 +71,36 @@ export function useGlazeSearch(
   return { results, loading, error, retry };
 }
 
-/** One glaze and everything it was photographed as, grouped for the detail screen. */
-export function useGlazeDetail(code: string | undefined) {
+/**
+ * One glaze and everything it was photographed as, grouped for the detail screen.
+ *
+ * Both calls go out together and both take the full ref. They used to share only a code, which
+ * meant a two-brand catalog could answer them from different glazes and the screen would render
+ * one brand's description above another's photographs.
+ *
+ * The ref is destructured into the dependency list rather than passed whole, because a caller
+ * building `{ manufacturer, code }` inline creates a new object every render.
+ */
+export function useGlazeDetail(ref: GlazeRef | undefined) {
   const [glaze, setGlaze] = useState<GlazeHit | null>(null);
   const [appearances, setAppearances] = useState<GlazeAppearance[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const manufacturer = ref?.manufacturer;
+  const code = ref?.code;
+
   useEffect(() => {
-    if (!code) return;
+    if (!manufacturer || !code) return;
+    const target: GlazeRef = { manufacturer, code };
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const [hit, rows] = await Promise.all([fetchGlaze(code), fetchAppearances(code)]);
+        const [hit, rows] = await Promise.all([
+          fetchGlaze(target),
+          fetchAppearances(target),
+        ]);
         if (!cancelled) {
           setGlaze(hit);
           setAppearances(rows);
@@ -99,7 +116,7 @@ export function useGlazeDetail(code: string | undefined) {
     return () => {
       cancelled = true;
     };
-  }, [code]);
+  }, [manufacturer, code]);
 
   const grouped = useMemo(() => groupAppearances(appearances), [appearances]);
 

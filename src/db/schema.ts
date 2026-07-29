@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm";
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, primaryKey } from "drizzle-orm/sqlite-core";
 
 /** A pottery piece — the top-level project a maker documents from wet clay to fired. */
 export const pieces = sqliteTable("pieces", {
@@ -37,25 +37,41 @@ export const media = sqliteTable("media", {
   createdAt: integer("created_at").notNull(),
 });
 
+/** Where a marked glaze sits: on the list to buy, or on the shelf. Never both. */
+export type MarkState = "wishlist" | "owned";
+
 /**
- * A maker's private note on a catalog glaze: do they own it, do they love it.
+ * A maker's private mark on a catalog glaze: is it on the list, is it on the shelf, is it loved.
  *
  * Local, not in Supabase. It is personal data, the app has no accounts, and a potter standing
  * at a shelf with no signal still needs to know whether they own a jar. Keeping it here also
  * means the hosted catalog stays purely read-only.
  *
- * Keyed by glaze *code* rather than the catalog's numeric id, because the code is the stable
- * identity — "PC-20" is printed on the jar, while a row id is an artefact of whichever load
- * last ran and would silently repoint if the catalog were rebuilt.
+ * Keyed by `(manufacturer, code)` rather than by the catalog's numeric id, because the pair is
+ * the stable identity — "PC-20" is printed on the jar and the brand is on the label, while a row
+ * id is an artefact of whichever load last ran and would silently repoint if the catalog were
+ * rebuilt. Code alone is not enough: `glazes` is unique on `(manufacturer_id, code)`, so marking
+ * one brand's PC-20 would have marked every brand's.
+ *
+ * `state` replaced a pair of independent booleans. Wishlist and owned are one question with two
+ * answers, not two questions — a jar cannot be both waiting to be bought and already on the
+ * shelf — and `favorite` is only meaningful once owned, which the repo enforces so no screen has
+ * to remember it.
  */
-export const glazeMarks = sqliteTable("glaze_marks", {
-  code: text("code").primaryKey(),
-  owned: integer("owned", { mode: "boolean" }).notNull().default(false),
-  favorite: integer("favorite", { mode: "boolean" }).notNull().default(false),
-  /** Denormalized so the shelf can list marked glazes without reaching the network. */
-  name: text("name"),
-  updatedAt: integer("updated_at").notNull(),
-});
+export const glazeMarks = sqliteTable(
+  "glaze_marks",
+  {
+    /** `manufacturers.key` from the catalog, e.g. `amaco`. */
+    manufacturer: text("manufacturer").notNull(),
+    code: text("code").notNull(),
+    state: text("state").$type<MarkState>().notNull(),
+    favorite: integer("favorite", { mode: "boolean" }).notNull().default(false),
+    /** Denormalized so the shelf can list marked glazes without reaching the network. */
+    name: text("name"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.manufacturer, table.code] })]
+);
 
 export const piecesRelations = relations(pieces, ({ many }) => ({
   entries: many(entries),

@@ -5,10 +5,22 @@
  * detail screen's sections change, which is a different pressure from the wire contract.
  */
 
-import type { GlazeAppearance } from "./types";
+import type { GlazeAppearance, GlazeHit, GlazeRef } from "./types";
 
 /** Cones a mid-fire potter actually reaches for, in the order they appear on a kiln. */
 export const COMMON_CONES = ["06", "05", "04", "5", "6", "10"] as const;
+
+/**
+ * The identity of a search hit, for routing to it or looking up its local mark.
+ *
+ * Lives here rather than in each screen because `manufacturer_key` is the wire column name and
+ * `manufacturer` is the domain word — a screen that spells the conversion itself is a screen
+ * that can spell it wrong.
+ */
+export const glazeRef = (glaze: GlazeHit): GlazeRef => ({
+  manufacturer: glaze.manufacturer_key,
+  code: glaze.code,
+});
 
 export function describeConeRange(from: string | null, to: string | null): string {
   if (!from && !to) return "Cone not stated";

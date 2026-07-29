@@ -68,6 +68,33 @@ jobs:
             ${{ github.event.inputs.images == 'false' && '--no-images' || '' }} \
             | tee sync.log
 
+      - name: Data quality
+        # A crawl can succeed and still produce a bad corpus: a changed page layout parses to
+        # nothing, a badge icon lands in the catalog as a glaze photograph, a second pass fails to
+        # resolve its layering links. `glaze-etl sync` exits 0 through all of that, so until now the
+        # only signal was someone opening the app and noticing.
+        #
+        # These assertions are about the scraped corpus rather than the schema, which is why they
+        # live here and not in CI — there is nothing to assert about 352 glazes until 352 glazes
+        # exist.
+        #
+        # Skipped for a capped run. `limit` is offered above precisely so someone can smoke-test
+        # with 50 products, and the first assertion here is "at least 300 glazes" — so running it
+        # against a deliberate partial load would fail the run for doing exactly what was asked.
+        # A scheduled run has no inputs at all, which is the case that matters.
+        if: always() && (github.event.inputs.limit == '' || github.event.inputs.limit == '0')
+        working-directory: .
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          # Named explicitly rather than letting psql fail on an empty DSN, where a missing secret
+          # reads as a corrupt catalog.
+          if [ -z "$DB_URL" ]; then
+            echo "SUPABASE_DB_URL is not set — cannot check the catalog" >&2
+            exit 1
+          fi
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/data_quality.sql
+
       - name: Report catalog state
         if: always()
         env:

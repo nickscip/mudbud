@@ -17,7 +17,7 @@ graph TD
   end
 
   subgraph pg["Postgres / Supabase — supabase/"]
-    rpc["RPCs: search_glazes · glaze_by_code · glaze_appearances"]
+    rpc["RPCs: search_glazes · glaze_by_code · glaze_appearances<br/>every lookup takes (manufacturer, code)"]
     tables["glazes · glaze_images · appearances<br/>vocabularies · parse_issues"]
     bucket["private Storage bucket<br/>image derivatives, signed URLs"]
     rpc --> tables
@@ -47,8 +47,13 @@ graph TD
 
 **Expo app (`src/`)** owns everything about *your* pottery, stored locally in SQLite so it
 works with no signal and no account. It reads the glaze catalog over the anon key and never
-writes to it. Owned/favourite marks are deliberately local: the catalog has no idea what you
-own, and should not.
+writes to it. Wishlist/owned/favourite marks are deliberately local: the catalog has no idea
+what you own, and should not.
+
+A glaze is named by **`(manufacturer, code)`**, never by code alone — in the RPCs, in the
+detail route, and in the local marks table. `glazes` has always been unique on that pair, and
+two brands are free to spell a code the same way, so anything resolving a bare code was picking
+a brand arbitrarily.
 
 **Postgres (`supabase/`)** is the contract. Migrations are append-only history — the schema
 changes by adding a migration, never by editing one. The three RPCs are the only shape the

@@ -1,11 +1,11 @@
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "./client";
-import { pieces, entries, media, glazeMarks } from "./schema";
+import { pieces, entries, media, glazeMarks, type MarkState } from "./schema";
 import { createId } from "@/lib/id";
 import { persistMedia, deleteMediaFile } from "@/lib/media";
+import type { GlazeRef } from "@/lib/glazes";
 import type { StageKey, PieceStatus } from "@/theme/tokens";
 
-/* ------------------------------- reactive reads ------------------------------ */
 // These return drizzle query objects to hand to useLiveQuery so screens re-render
 // automatically whenever the underlying rows change.
 
@@ -31,8 +31,6 @@ export function entryByIdQuery(id: string) {
     with: { media: true },
   });
 }
-
-/* --------------------------------- mutations -------------------------------- */
 
 export async function createPiece(input: {
   title: string;
@@ -135,8 +133,6 @@ export async function deletePiece(id: string): Promise<void> {
   await db.delete(pieces).where(eq(pieces.id, id));
 }
 
-/* --------------------------------- helpers ---------------------------------- */
-
 const STATUS_RANK: Record<PieceStatus, number> = {
   in_progress: 0,
   bisqued: 1,
@@ -173,60 +169,81 @@ function advanceStatus(
   return STATUS_RANK[derived] > STATUS_RANK[base] ? derived : base;
 }
 
-/* --------------------------------- glaze marks -------------------------------- */
-// Owned / favourite flags on catalog glazes. Local and offline by design — see the
-// glazeMarks table comment.
+// Wishlist / owned / favourite on catalog glazes. Local and offline by design — see the
+// glazeMarks table comment. Every function here takes a full GlazeRef, because a code on its
+// own does not name a glaze.
+
+const sameGlaze = (ref: GlazeRef) =>
+  and(eq(glazeMarks.manufacturer, ref.manufacturer), eq(glazeMarks.code, ref.code));
+
+/**
+ * One mark's key as a single string, for indexing a fetched list by glaze.
+ *
+ * Exported because how a mark is keyed is this module's business: a screen that builds
+ * `${code}` on its own would silently collapse two brands into one entry.
+ */
+export const markKey = (ref: GlazeRef) => `${ref.manufacturer}:${ref.code}`;
 
 export function glazeMarksQuery() {
   return db.query.glazeMarks.findMany({ orderBy: [desc(glazeMarks.updatedAt)] });
 }
 
-export function glazeMarkQuery(code: string) {
-  return db.query.glazeMarks.findFirst({ where: eq(glazeMarks.code, code) });
+export function glazeMarkQuery(ref: GlazeRef) {
+  return db.query.glazeMarks.findFirst({ where: sameGlaze(ref) });
 }
 
 /**
- * Flip one flag, creating the row if this glaze has never been marked.
+ * Put a glaze on the wishlist, on the shelf, or neither.
  *
- * A row with both flags false is deleted rather than kept: "I unmarked this" and "I never
- * marked this" are the same state, and keeping empty rows would make the marked-glazes list
+ * `null` deletes the row rather than storing an "unmarked" state: "I unmarked this" and "I never
+ * marked this" are the same thing, and keeping empty rows would make the marked-glazes lists
  * quietly wrong.
+ *
+ * Wishlist and owned are one choice, so this sets rather than toggles — moving between them is a
+ * single write and there is no intermediate state where a glaze is both.
  */
-export async function toggleGlazeMark(
-  code: string,
-  field: "owned" | "favorite",
+export async function setGlazeMarkState(
+  ref: GlazeRef,
+  state: MarkState | null,
   name?: string
 ): Promise<void> {
-  const existing = await db.query.glazeMarks.findFirst({
-    where: eq(glazeMarks.code, code),
-  });
-  const next = {
-    owned: existing?.owned ?? false,
-    favorite: existing?.favorite ?? false,
-    [field]: !(existing?.[field] ?? false),
-  };
-
-  if (!next.owned && !next.favorite) {
-    await db.delete(glazeMarks).where(eq(glazeMarks.code, code));
+  if (state === null) {
+    await db.delete(glazeMarks).where(sameGlaze(ref));
     return;
   }
 
+  const existing = await db.query.glazeMarks.findFirst({ where: sameGlaze(ref) });
+  // Favourite is only meaningful on a glaze you own, so moving to the wishlist clears it
+  // instead of parking a flag no screen will read.
+  const favorite = state === "owned" ? (existing?.favorite ?? false) : false;
+  const row = {
+    state,
+    favorite,
+    name: name ?? existing?.name ?? null,
+    updatedAt: Date.now(),
+  };
+
   await db
     .insert(glazeMarks)
-    .values({
-      code,
-      owned: next.owned,
-      favorite: next.favorite,
-      name: name ?? existing?.name ?? null,
-      updatedAt: Date.now(),
-    })
+    .values({ manufacturer: ref.manufacturer, code: ref.code, ...row })
     .onConflictDoUpdate({
-      target: glazeMarks.code,
-      set: {
-        owned: next.owned,
-        favorite: next.favorite,
-        name: name ?? existing?.name ?? null,
-        updatedAt: Date.now(),
-      },
+      target: [glazeMarks.manufacturer, glazeMarks.code],
+      set: row,
     });
+}
+
+/**
+ * Flip the favourite flag on a glaze already owned.
+ *
+ * A no-op on anything else, so the "favourite implies owned" invariant lives here rather than in
+ * every screen that draws a heart — pressing it cannot conjure an owned row.
+ */
+export async function toggleGlazeFavorite(ref: GlazeRef): Promise<void> {
+  const existing = await db.query.glazeMarks.findFirst({ where: sameGlaze(ref) });
+  if (!existing || existing.state !== "owned") return;
+
+  await db
+    .update(glazeMarks)
+    .set({ favorite: !existing.favorite, updatedAt: Date.now() })
+    .where(sameGlaze(ref));
 }
