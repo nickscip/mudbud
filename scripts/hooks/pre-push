@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+#
+# Refuse to push a database change that has not been proven against a real Postgres.
+#
+# Installed by `scripts/install-hooks.sh`. Lives in the repo rather than in .git/hooks so it is
+# reviewable and shared; .git/hooks is not version controlled.
+#
+# Why a hook and not just CI: required status checks need GitHub Pro or a public repository, so on
+# this repo CI is advisory — it goes red and the merge still succeeds. Until that changes, this is
+# the only thing standing between a broken migration and `main`. It is not a security control
+# (`--no-verify` exists); it is a way to make the easy path the correct one.
+#
+# Only runs when the push actually touches the schema, so ordinary app pushes are unaffected.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+# What is being pushed, relative to what the remote already has. Reads the ref pairs git feeds the
+# hook on stdin rather than assuming HEAD against origin/main.
+range=""
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  # An all-zero local sha is a branch deletion: nothing to check.
+  case "$local_sha" in *[^0]*) ;; *) continue ;; esac
+
+  if [[ "$remote_sha" =~ ^0+$ ]]; then
+    # New branch on the remote. Compare against the default branch instead of every commit ever.
+    base="$(git merge-base "$local_sha" origin/HEAD 2>/dev/null \
+            || git merge-base "$local_sha" origin/main 2>/dev/null || echo "")"
+    [[ -n "$base" ]] && range="$base $local_sha"
+  else
+    range="$remote_sha $local_sha"
+  fi
+done
+
+# Nothing readable on stdin (some git invocations), so fall back to the working tree's branch.
+if [[ -z "$range" ]]; then
+  range="origin/main HEAD"
+fi
+
+changed="$(git diff --name-only $range -- supabase/migrations supabase/tests src/db 2>/dev/null || true)"
+
+if [[ -z "$changed" ]]; then
+  exit 0
+fi
+
+echo "pre-push: this push touches the schema —"
+sed 's/^/  /' <<<"$changed"
+echo
+
+failed=0
+
+if git diff --name-only $range -- src/db | grep -q .; then
+  echo "pre-push: device database"
+  if ! node --experimental-strip-types scripts/test-device-db.mjs >/dev/null 2>&1; then
+    node --experimental-strip-types scripts/test-device-db.mjs || true
+    failed=1
+  else
+    echo "  ok"
+  fi
+fi
+
+if git diff --name-only $range -- supabase/migrations supabase/tests | grep -q .; then
+  echo "pre-push: replaying migrations and asserting the contract"
+  if ! scripts/verify-schema.sh; then
+    failed=1
+  fi
+fi
+
+if [[ $failed -ne 0 ]]; then
+  cat >&2 <<'MSG'
+
+pre-push: refusing to push an unverified schema change.
+
+  No Postgres reachable?   supabase start
+  Genuinely need to push?  git push --no-verify
+
+A migration applied to a hosted database cannot be taken back, and the app mirrors the RPC
+signatures by hand — so a mismatch is a runtime failure in the app, not a build error here.
+MSG
+  exit 1
+fi
+
+echo "pre-push: schema verified"

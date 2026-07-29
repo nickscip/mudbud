@@ -382,12 +382,35 @@ Ordered roughly by what unblocks what — G1 gates everything.
   and the ordering rule that actually bites: **migrate the hosted database before shipping
   a build that expects new RPC parameters.** A4's filter work makes this a live
   concern, since the app and the RPC signature are hand-mirrored.
+  Two things now have somewhere to live: `deploy-schema.yml` is the only sanctioned way to
+  migrate a hosted database, and **expand-contract becomes mandatory the moment G6 or G8
+  ships** — drop-and-recreate breaks any bundle still calling the old signature, and OTA
+  leaves users on old bundles. Recorded in `AGENTS.md`; unenforced by design while there is
+  one developer and no hosted project.
 - **G11 · Crash reports and tester feedback** — **todo**. Beta feedback with no stack
   traces is guesswork. Needs an error-reporting choice checked against the Expo Go / dev
   client decision from G5, plus somewhere for testers to send notes.
-- **G12 · CI extension** — **todo**, small. `.github/workflows/ci.yml` already runs the ETL
-  checks, a schema job against Postgres, and an app job. Add whatever build or release
-  automation G4–G8 settle on.
+- **G12 · CI extension** — **partial**. What exists now, and it is more than it was:
+  - `guards` — migrations are append-only, checked against the merge base.
+  - `etl` — lint, types, and tests **including** the Postgres integration tests, which were
+    written against a real database and then skipped in CI for want of
+    `TEST_SUPABASE_DB_URL`. The Storage tests still skip; they need the Storage service.
+  - `schema` — `scripts/verify-schema.sh` replays every migration into a throwaway database
+    and runs `supabase/tests/schema/*.sql`: `search_smoke.sql` for behaviour, `contract.sql`
+    for the surface (one overload per RPC, the frozen `glaze_hit` column list, the exact anon
+    grant set, row security, vocabulary invariants), and `pagination.sql` for plan shape.
+  - `app` — typecheck, `scripts/test-device-db.mjs` for the local SQLite upgrade path, bundle.
+  - `sync-catalog.yml` runs `supabase/tests/data_quality.sql` after a load, so a crawl that
+    parses to nothing fails loudly instead of shipping. Skipped for a capped `--limit` run,
+    which is a deliberate partial load.
+  - `deploy-schema.yml` is the only sanctioned way to migrate a hosted database; its `apply`
+    job `needs: verify`, so the container replay cannot be skipped.
+  - `scripts/install-hooks.sh` installs a pre-push hook that runs the same verification.
+    **It exists because CI here is advisory:** required status checks need GitHub Pro or a
+    public repo, so a red run does not block a merge.
+  CI's Postgres is pinned to 17 to match the Supabase stack — server versions disagree about
+  catalog output, which already bit one assertion.
+  Still to add: whatever build or release automation G4–G8 settle on.
 
 ## Epic H — Mud Bud, and the style layer
 
