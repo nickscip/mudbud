@@ -351,12 +351,17 @@ should stay. These are the ones that actually bind behaviour:
 Goal: run the app on a phone away from this machine, then get builds to beta testers.
 Ordered roughly by what unblocks what — G1 gates everything.
 
-- **G1 · Hosted Supabase** — **todo**, and the hard gate. `.env.local` points
-  `EXPO_PUBLIC_*` at the CLI stack on `127.0.0.1:54321`; no other device can reach that,
-  on this network or off it. Needs a hosted project, migrations applied (append-only, in
-  order), vocabularies seeded, the private image bucket recreated with its signed-URL
-  policy, and the catalog loaded. Decide dev-vs-prod project split now rather than after
-  testers exist.
+- **G1 · Hosted Supabase** — **mostly done**, and it is where the gate stopped being
+  theoretical. A hosted project exists, `.env.local` points `EXPO_PUBLIC_*` at it, the
+  vocabularies are seeded and the catalog is loaded (352 glazes, 1325 appearances, 1294
+  images) — so a phone can reach the backend, which `127.0.0.1:54321` never allowed.
+  What is left is the part that bit: **migrations were applied by hand, so the hosted
+  schema drifted behind the repo.** Its `search_glazes` sat at the 12-argument shape from
+  `20260727000200` while the bundle sent 13, and every search returned PostgREST's
+  `PGRST202`. Applying `20260728000100`/`20260728000200` is the immediate fix; the durable
+  one is that `deploy-schema.yml` is now live and is the only way this database changes
+  again. Also outstanding: confirm the private image bucket and its signed-URL policy, and
+  decide the dev-vs-prod project split before testers exist rather than after.
 - **G2 · Point the sync at the hosted project** — **todo**, mostly config. The workflow
   already exists: `.github/workflows/sync-catalog.yml` runs weekly (Monday 09:00 UTC) plus
   `workflow_dispatch`, and reads `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_DB_URL`

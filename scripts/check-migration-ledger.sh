@@ -25,7 +25,13 @@
 # `--record` inserts versions into the ledger *without applying anything*. It is for the one case
 # where a migration provably ran but was not written down, and you have checked the schema yourself.
 # Recording a version that did not actually run means it never will — so the versions are named
-# explicitly, one by one, and never inferred.
+# explicitly, one by one, and never inferred. It creates the ledger table when there is none, which
+# is the state of a database that has only ever been migrated by hand.
+#
+# Nothing needs recording if re-applying it is harmless: a migration of only `create index if not
+# exists` / `comment on` is safe to leave unrecorded and let `db push` run again. Record the ones
+# that would fail or regress on a second pass — `create table`, `add column`, and any `grant` naming
+# a signature a later migration dropped.
 
 set -euo pipefail
 
@@ -56,11 +62,32 @@ if ! "$PSQL" "$DSN" -c 'select 1' >/dev/null 2>&1; then
 fi
 
 # Absent entirely on a database that has only ever been migrated by hand, which is itself the
-# finding rather than an error to paper over.
+# finding rather than an error to paper over — so a plain check reports it and stops.
+#
+# `--record` is the one caller with somewhere to go from here, and it used to exit here too, which
+# made the recovery path this script documents unreachable on the database that needs it most: a
+# hand-built one has no ledger table, and recording is precisely how a ledger gets bootstrapped
+# onto it. Found on the hosted project, whose schema was at 20260727000200 with no recorded history
+# at all.
+#
+# The shape is the CLI's own, read off a database `supabase db push` created rather than guessed:
+# version text primary key, statements text[], name text. `statements` is left null, which is what
+# `supabase migration repair` writes too — nothing reads it to decide whether a version applied.
 if ! "$PSQL" "$DSN" -At -c \
      "select to_regclass('supabase_migrations.schema_migrations') is not null" | grep -q t; then
-  echo "no supabase_migrations.schema_migrations table: this database has no recorded history at all" >&2
-  exit 1
+  if [[ "$mode" != "record" ]]; then
+    echo "no supabase_migrations.schema_migrations table: this database has no recorded history at all" >&2
+    exit 1
+  fi
+  echo "no ledger table on ${DSN##*@} — creating one to record into" >&2
+  "$PSQL" "$DSN" -v ON_ERROR_STOP=1 -q <<'SQL'
+create schema if not exists supabase_migrations;
+create table if not exists supabase_migrations.schema_migrations (
+  version    text not null primary key,
+  statements text[],
+  name       text
+);
+SQL
 fi
 
 if [[ "$mode" == "record" ]]; then

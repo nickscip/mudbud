@@ -62,6 +62,27 @@ table is not. Override deliberately for a migration that genuinely needs to wait
 MUDBUD_LOCK_TIMEOUT=30s scripts/apply-migrations.sh "$DSN"
 ```
 
+**On the hosted project this does not currently work, and the DSN is why.** Measured against the
+real project: `?options=-c lock_timeout=5s` is honoured on the direct connection
+(`db.<ref>.supabase.co`) and **silently dropped by both poolers** — `current_setting('lock_timeout')`
+comes back `0` on 6543 and on 5432 alike, with no error to notice. The direct host resolves AAAA
+only, so a GitHub runner cannot reach it, which leaves `deploy-schema.yml` applying through a pooler
+with no timeout at all: it waits forever, which is the failure mode the paragraph above exists to
+prevent. Harmless for a migration of only `create function` / `grant` — those take no table lock —
+and unacceptable for the first one that touches a table.
+
+The mechanism that survives a pooler is a database-level default, inherited by every new session
+regardless of DSN, so `supabase db push` picks it up:
+
+```sql
+alter database postgres set lock_timeout = '5s';
+```
+
+Belongs in a migration of its own, and is needed before the first migration with real contention
+behind it — a hosted `alter table`, or any DDL applied while the app is being used. `revoke` and
+`alter default privileges` already take locks on what they touch, so this stopped being
+hypothetical the moment there was a hosted database to apply anything to.
+
 ## Does the database agree about its own history?
 
 ```
@@ -77,7 +98,17 @@ the repo had replaced twice.
 
 `--record` writes a version into the ledger **without applying it**, for the case where a
 migration provably ran but was not written down. Check the schema yourself first; recording
-something that never ran means it never will.
+something that never ran means it never will. It creates the ledger table when there is none,
+which is what a database migrated only by hand looks like — the hosted project was found that
+way, its schema at `20260727000200` with no recorded history at all, so every file read as
+unrecorded and a `db push` would have re-run `create table` against tables that already existed.
+
+**Record only what a second pass would break.** A migration of nothing but
+`create index if not exists` / `comment on` is safe to leave unrecorded and let `db push` apply
+again — cheaper than proving it ran. Record the rest: `create table`, `add column`, and any
+`grant` naming a signature a later migration dropped, which errors instead of no-opping. When the
+schema is the only evidence available, prove it by shape — a column probe, an RPC's argument list,
+or the behaviour the migration was written to fix.
 
 ## One rule that is not enforced, on purpose
 
