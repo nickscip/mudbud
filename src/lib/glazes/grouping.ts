@@ -44,10 +44,17 @@ export function describePriceFrom(priceMin: number | null): string | null {
   return `From $${priceMin.toFixed(2)}`;
 }
 
-/** The site attribution points at, taken from the URL the catalog already carries. */
+/**
+ * The site attribution points at, taken from the URL the catalog already carries.
+ *
+ * Two failure shapes, one answer: a spec-compliant `URL` throws on a string that is not a
+ * URL, React Native's own shim parses by regex and returns an empty host instead. Which one
+ * is installed depends on whether Expo's runtime polyfill loaded, so `|| null` is what makes
+ * the declared return type true either way — a caller must not have to know.
+ */
 export function productHost(url: string): string | null {
   try {
-    return new URL(url).host;
+    return new URL(url).host || null;
   } catch {
     return null;
   }

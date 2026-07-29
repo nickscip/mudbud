@@ -221,6 +221,24 @@ type TabProps = {
   onEnlarge: (image: ViewerImage) => void;
 };
 
+/**
+ * A section with nothing in it, said in the section's own voice.
+ *
+ * Every tab can be empty, and an empty tab must still name what is missing — "no layering
+ * photographs" is information about the glaze, while a blank tab reads as a failure to load.
+ * Kept as one component so the three do not drift apart in spacing or type scale.
+ */
+function TabEmpty({ title, body }: { title: string; body: string }) {
+  return (
+    <View className="mt-6 px-4">
+      <Txt variant="title" className="mb-1 text-base">
+        {title}
+      </Txt>
+      <Txt variant="caption">{body}</Txt>
+    </View>
+  );
+}
+
 /** How the glaze behaves as it goes on: coat thickness, and the clay under it. */
 function ApplicationTab({ grouped, onEnlarge }: TabProps) {
   return (
@@ -251,12 +269,7 @@ function ApplicationTab({ grouped, onEnlarge }: TabProps) {
           </Txt>
         </View>
       ) : (
-        <View className="mt-6 px-4">
-          <Txt variant="title" className="mb-1 text-base">
-            Coat thickness
-          </Txt>
-          <Txt variant="caption">Not published for this glaze.</Txt>
-        </View>
+        <TabEmpty title="Coat thickness" body="Not published for this glaze." />
       )}
 
       {grouped.onClay.length > 0 ? (
@@ -279,14 +292,7 @@ function ApplicationTab({ grouped, onEnlarge }: TabProps) {
  */
 function CombosTab({ grouped, onEnlarge }: TabProps) {
   if (grouped.layered.length === 0) {
-    return (
-      <View className="mt-6 px-4">
-        <Txt variant="title" className="mb-1 text-base">
-          Combos
-        </Txt>
-        <Txt variant="caption">No layering photographs for this glaze.</Txt>
-      </View>
-    );
+    return <TabEmpty title="Combos" body="No layering photographs for this glaze." />;
   }
   return (
     <AppearanceRail
@@ -304,12 +310,7 @@ function PhotosTab({ grouped, onEnlarge }: TabProps) {
   const rest = grouped.plain.slice(1);
   if (rest.length === 0) {
     return (
-      <View className="mt-6 px-4">
-        <Txt variant="title" className="mb-1 text-base">
-          Also photographed
-        </Txt>
-        <Txt variant="caption">No other photographs of this glaze.</Txt>
-      </View>
+      <TabEmpty title="Also photographed" body="No other photographs of this glaze." />
     );
   }
   return (
