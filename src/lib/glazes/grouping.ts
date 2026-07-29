@@ -22,6 +22,44 @@ export const glazeRef = (glaze: GlazeHit): GlazeRef => ({
   code: glaze.code,
 });
 
+/**
+ * A brand name the header can print.
+ *
+ * Interim until F10: the RPCs return `manufacturer_key` but no display name, so the key is
+ * all there is to show. Uppercasing happens to spell AMACO correctly; when a manufacturer
+ * whose name is not an acronym lands, fix this by adding the display name to `glaze_hit`
+ * rather than by teaching this function to spell.
+ */
+export function manufacturerLabel(key: string): string {
+  return key.toUpperCase();
+}
+
+/**
+ * The lowest price a glaze sells at, as a label — `price_min` is the cheapest SKU of
+ * several sizes, so a bare figure would read as "the price" and be wrong for every jar
+ * except the smallest.
+ */
+export function describePriceFrom(priceMin: number | null): string | null {
+  if (priceMin == null) return null;
+  return `From $${priceMin.toFixed(2)}`;
+}
+
+/**
+ * The site attribution points at, taken from the URL the catalog already carries.
+ *
+ * Two failure shapes, one answer: a spec-compliant `URL` throws on a string that is not a
+ * URL, React Native's own shim parses by regex and returns an empty host instead. Which one
+ * is installed depends on whether Expo's runtime polyfill loaded, so `|| null` is what makes
+ * the declared return type true either way — a caller must not have to know.
+ */
+export function productHost(url: string): string | null {
+  try {
+    return new URL(url).host || null;
+  } catch {
+    return null;
+  }
+}
+
 export function describeConeRange(from: string | null, to: string | null): string {
   if (!from && !to) return "Cone not stated";
   if (from && to && from !== to) return `Cone ${from}–${to}`;
