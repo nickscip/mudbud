@@ -7,6 +7,18 @@
  * codegen step to keep in sync, and no ORM pretending the two halves are one system.
  */
 
+/**
+ * What it takes to name one glaze.
+ *
+ * A code alone is not an identity — `glazes` is unique on `(manufacturer_id, code)`, and two
+ * brands are free to spell a code the same way. Every lookup, route and local mark carries the
+ * pair, so there is no layer left where a bare code could resolve to the wrong glaze.
+ *
+ * `manufacturer` is `manufacturers.key` — the same lowercase string `GlazeHit.manufacturer_key`
+ * carries, so a hit can be turned into a ref without a translation table.
+ */
+export type GlazeRef = { manufacturer: string; code: string };
+
 /** A search hit. `tier` is what splits the results into "Matches" and "Similar". */
 export type GlazeHit = {
   id: number;
@@ -85,11 +97,15 @@ export type GlazeFilters = {
   foodSafeOnly?: boolean;
   clayBodyIds?: number[];
   /**
-   * Restrict to these glaze codes. Used for the Owned / Favourites filters, whose source of
-   * truth is the device's own SQLite — filtering the already-fetched page instead would
+   * Restrict to these glazes. Used for the Wishlist / Owned / Favourites filters, whose source
+   * of truth is the device's own SQLite — filtering the already-fetched page instead would
    * silently drop anything ranked below the limit.
+   *
+   * Refs rather than codes: the marks table knows which brand each mark is on, and sending only
+   * the codes would hand the server a list it has to guess at — which is how one brand's owned
+   * glaze surfaces another brand's.
    */
-  codes?: string[];
+  marks?: GlazeRef[];
 };
 
 export type SearchResults = {

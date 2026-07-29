@@ -17,9 +17,10 @@ import { EmptyState } from "@/components/EmptyState";
 import { FilterChip } from "@/components/FilterChip";
 import { GlazeCard } from "@/components/GlazeCard";
 import { ScreenHeader } from "@/components/ScreenHeader";
-import { useGlazeSearch, type GlazeFilters, type GlazeHit } from "@/lib/glazes";
+import { glazeRef, useGlazeSearch, type GlazeFilters, type GlazeHit } from "@/lib/glazes";
 import { glazeCatalogConfigured } from "@/lib/supabase";
-import { glazeMarksQuery } from "@/db/repo";
+import { glazeMarksQuery, markKey } from "@/db/repo";
+import type { GlazeMark } from "@/db/schema";
 import { colors } from "@/theme/tokens";
 
 /** Cone presets, labelled the way a potter would say them. */
@@ -30,6 +31,32 @@ const CONE_PRESETS = [
   { label: "Cone 10", from: 32, to: 32 },
 ] as const;
 
+/**
+ * The three ways to slice your own marks: what you want, what you have, what you love.
+ *
+ * Chip label, row predicate and empty-state wording live in one entry so a filter cannot end up
+ * labelled one thing and matching another.
+ */
+const MARK_FILTERS = {
+  wishlist: {
+    label: "Wishlist",
+    match: (m: GlazeMark) => m.state === "wishlist",
+    empty: "Nothing on the wishlist yet",
+  },
+  owned: {
+    label: "Owned",
+    match: (m: GlazeMark) => m.state === "owned",
+    empty: "Nothing marked owned yet",
+  },
+  favorite: {
+    label: "Favorites",
+    match: (m: GlazeMark) => m.favorite,
+    empty: "No favourites yet",
+  },
+} as const;
+
+type MarkFilter = keyof typeof MARK_FILTERS;
+
 type Section = { title: string; subtitle?: string; data: GlazeHit[] };
 
 export default function GlazeSearchScreen() {
@@ -39,13 +66,13 @@ export default function GlazeSearchScreen() {
   const [term, setTerm] = useState("");
   const [conePreset, setConePreset] = useState<number | null>(null);
   const [foodSafeOnly, setFoodSafeOnly] = useState(false);
-  const [markFilter, setMarkFilter] = useState<"owned" | "favorite" | null>(null);
+  const [markFilter, setMarkFilter] = useState<MarkFilter | null>(null);
 
-  // Marks are local, so filtering by them happens here rather than in the RPC — the catalog
-  // has no idea what you own, and should not.
+  // Marks are local, so which glazes to ask for is decided here rather than in the RPC — the
+  // catalog has no idea what you own, and should not.
   const { data: marks } = useLiveQuery(glazeMarksQuery());
-  const marksByCode = useMemo(
-    () => new Map((marks ?? []).map((m) => [m.code, m])),
+  const marksByGlaze = useMemo(
+    () => new Map((marks ?? []).map((m) => [markKey(m), m])),
     [marks]
   );
   const filters = useMemo<GlazeFilters>(() => {
@@ -54,16 +81,19 @@ export default function GlazeSearchScreen() {
       coneFrom: preset?.from,
       coneTo: preset?.to,
       foodSafeOnly,
-      // Sent to the server rather than applied to the page we already have, so an owned
-      // glaze ranked below the limit still shows up under its own filter.
-      codes: markFilter
-        ? (marks ?? []).filter((m) => m[markFilter]).map((m) => m.code)
+      // Sent to the server rather than applied to the page we already have, so a marked glaze
+      // ranked below the limit still shows up under its own filter. Brand travels with the
+      // code, or the filter would surface another manufacturer's glaze of the same name.
+      marks: markFilter
+        ? (marks ?? [])
+            .filter(MARK_FILTERS[markFilter].match)
+            .map((m) => ({ manufacturer: m.manufacturer, code: m.code }))
         : undefined,
     };
   }, [conePreset, foodSafeOnly, markFilter, marks]);
 
   // A mark filter with nothing marked must show nothing, so there is no query to make.
-  const nothingMarked = markFilter !== null && (filters.codes?.length ?? 0) === 0;
+  const nothingMarked = markFilter !== null && (filters.marks?.length ?? 0) === 0;
 
   const { results, loading, error, retry } = useGlazeSearch(term, filters, {
     enabled: glazeCatalogConfigured && !nothingMarked,
@@ -144,16 +174,14 @@ export default function GlazeSearchScreen() {
             selected={foodSafeOnly}
             onPress={() => setFoodSafeOnly((on) => !on)}
           />
-          <FilterChip
-            label="Owned"
-            selected={markFilter === "owned"}
-            onPress={() => setMarkFilter(markFilter === "owned" ? null : "owned")}
-          />
-          <FilterChip
-            label="Favorites"
-            selected={markFilter === "favorite"}
-            onPress={() => setMarkFilter(markFilter === "favorite" ? null : "favorite")}
-          />
+          {(Object.keys(MARK_FILTERS) as MarkFilter[]).map((key) => (
+            <FilterChip
+              key={key}
+              label={MARK_FILTERS[key].label}
+              selected={markFilter === key}
+              onPress={() => setMarkFilter(markFilter === key ? null : key)}
+            />
+          ))}
         </ScrollView>
       </View>
 
@@ -177,48 +205,52 @@ export default function GlazeSearchScreen() {
             paddingBottom: insets.bottom + 24,
           }}
           keyboardShouldPersistTaps="handled"
-          renderItem={({ item }) =>
-            item.kind === "header" ? (
-              <View className="mb-2 mt-1">
-                <Txt variant="label" className="text-xs uppercase tracking-wide">
-                  {item.section.title}
-                </Txt>
-                {item.section.subtitle ? (
-                  <Txt variant="caption" className="text-xs">
-                    {item.section.subtitle}
+          renderItem={({ item }) => {
+            if (item.kind === "header") {
+              return (
+                <View className="mb-2 mt-1">
+                  <Txt variant="label" className="text-xs uppercase tracking-wide">
+                    {item.section.title}
                   </Txt>
-                ) : null}
-              </View>
-            ) : (
+                  {item.section.subtitle ? (
+                    <Txt variant="caption" className="text-xs">
+                      {item.section.subtitle}
+                    </Txt>
+                  ) : null}
+                </View>
+              );
+            }
+
+            const ref = glazeRef(item.glaze);
+            const mark = marksByGlaze.get(markKey(ref));
+            return (
               <GlazeCard
                 glaze={item.glaze}
-                owned={marksByCode.get(item.glaze.code)?.owned}
-                favorite={marksByCode.get(item.glaze.code)?.favorite}
+                state={mark?.state}
+                favorite={mark?.favorite}
                 onPress={() =>
                   router.push({
-                    pathname: "/glazes/[code]",
-                    params: { code: item.glaze.code },
+                    pathname: "/glazes/[manufacturer]/[code]",
+                    params: ref,
                   })
                 }
               />
-            )
-          }
+            );
+          }}
           ListEmptyComponent={
             loading ? null : (
               <EmptyState
                 icon="color-palette-outline"
                 title={
-                  markFilter === "owned"
-                    ? "Nothing marked owned yet"
-                    : markFilter === "favorite"
-                      ? "No favourites yet"
-                      : term
-                        ? "No glaze like that"
-                        : "Find a glaze"
+                  markFilter
+                    ? MARK_FILTERS[markFilter].empty
+                    : term
+                      ? "No glaze like that"
+                      : "Find a glaze"
                 }
                 body={
                   markFilter
-                    ? "Open a glaze and mark it — your marks stay on this device and work offline."
+                    ? "Open a glaze and save it — your marks stay on this device and work offline."
                     : term
                       ? "Try a colour word, or just the line code like PC or SM."
                       : "Search by name, code, or colour — 'sage green' works as well as 'PC-20'."

@@ -6,12 +6,13 @@ import { Txt } from "./AppText";
 import { PressableScale } from "./PressableScale";
 import { SwatchTile } from "./SwatchTile";
 import { describeConeRange, type GlazeHit } from "@/lib/glazes";
+import type { MarkState } from "@/db/schema";
 import { colors } from "@/theme/tokens";
 
 type Props = {
   glaze: GlazeHit;
   onPress: () => void;
-  owned?: boolean;
+  state?: MarkState | null;
   favorite?: boolean;
 };
 
@@ -22,7 +23,7 @@ type Props = {
  * thicknesses, how many layering combinations, which clay bodies. That is the whole
  * proposition of the feature, so it belongs on the card rather than only in the detail.
  */
-export function GlazeCard({ glaze, onPress, owned, favorite }: Props) {
+export function GlazeCard({ glaze, onPress, state, favorite }: Props) {
   const evidence: string[] = [];
   if (glaze.coat_levels_available > 0) {
     evidence.push(`${glaze.coat_levels_available} coats`);
@@ -73,9 +74,14 @@ export function GlazeCard({ glaze, onPress, owned, favorite }: Props) {
         </View>
 
         {/* Your own marks read louder than catalog facts, because they are the reason you
-            are scanning this list. Food safety stays a quiet dot underneath. */}
+            are scanning this list. Wishlist and owned are distinct glyphs rather than two
+            shades of one, since "want" and "have" are the difference the list is scanned for.
+            Food safety stays a quiet dot underneath. */}
         <View className="ml-2 items-center">
-          {owned ? (
+          {state === "wishlist" ? (
+            <Ionicons name="bookmark" size={15} color={colors.stone[500]} />
+          ) : null}
+          {state === "owned" ? (
             <Ionicons name="cube" size={15} color={colors.clay[500]} />
           ) : null}
           {favorite ? (
@@ -83,10 +89,10 @@ export function GlazeCard({ glaze, onPress, owned, favorite }: Props) {
               name="heart"
               size={15}
               color={colors.glaze[500]}
-              style={{ marginTop: owned ? 3 : 0 }}
+              style={{ marginTop: state ? 3 : 0 }}
             />
           ) : null}
-          {!owned && !favorite && glaze.food_safe ? (
+          {!state && !favorite && glaze.food_safe ? (
             <View
               className="h-2 w-2 rounded-full"
               style={{ backgroundColor: colors.glaze[500] }}

@@ -35,9 +35,9 @@ Core loop: **Shelf → Piece timeline → Add moment (capture) → Moment detail
 And the glaze half:
 
 - **Glaze search** (`src/app/glazes/index.tsx`) — search by name, code or colour word,
-  filtered by cone, food safety, and what you own.
-- **Glaze detail** (`src/app/glazes/[code].tsx`) — how the glaze actually fires: coat
-  thickness thin → thick, on different clay bodies, layered over others.
+  filtered by cone, food safety, and your own wishlist / owned / favourites.
+- **Glaze detail** (`src/app/glazes/[manufacturer]/[code].tsx`) — how the glaze actually
+  fires: coat thickness thin → thick, on different clay bodies, layered over others.
 
 Your pieces are stored **locally** (SQLite + on-disk media) — no account, and they never
 leave the device. The glaze catalog is the one thing read over the network, and the app

@@ -86,7 +86,7 @@ apply the smallest change that removes the hurt.
 
 **Single responsibility** — the live pressure in this repo. The largest modules do several
 jobs at once: `etl/glaze_etl/core/loader.py`, `core/composite_splitter.py`, `core/media.py`
-on the Python side; `src/app/glazes/[code].tsx` and `src/app/glazes/index.tsx` on the app
+on the Python side; `src/app/glazes/[manufacturer]/[code].tsx` and `src/app/glazes/index.tsx` on the app
 side, where data fetching, filter state and presentation share a file. The useful split is
 by *reason to change* — a screen changes when the design changes, a query changes when the
 schema changes, so those belong apart. Pulling a query into `src/db/repo.ts` or a

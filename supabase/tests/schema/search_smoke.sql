@@ -134,4 +134,104 @@ begin
   raise notice 'search_glazes: all assertions passed';
 end $$;
 
+-- Everything above ran against one manufacturer, which is the exact condition under which a
+-- bare code passes for an identity. Only a second brand sharing a code can prove the lookups
+-- are scoped, so the fixture lands here — after the assertions that count rows, so
+-- "browse-all returns 4" stays true.
+--
+-- Keyed `testco` rather than `mayco` deliberately: F10 adds the real Mayco row by migration,
+-- and a duplicate key here would collide with it.
+
+insert into manufacturers (key, name, site_url)
+values ('testco', 'Test Co', 'https://example.test');
+
+insert into glaze_lines (manufacturer_id, code, name, cone_from_id, cone_to_id)
+select id, 'PC', 'Parallel Colours',
+       (select id from cones where name='5'), (select id from cones where name='6')
+from manufacturers where key='testco';
+
+insert into glazes (manufacturer_id, line_id, code, name, slug, product_url,
+                    description, cone_from_id, cone_to_id, cone_source, color_terms)
+select m.id, l.id, 'PC-20', 'PC-20 Not Blue Rutile', 'pc-20-not-blue-rutile',
+       'https://example.test/product/pc-20-not-blue-rutile/',
+       'Another manufacturer''s glaze that happens to share a code.',
+       (select id from cones where name='5'), (select id from cones where name='6'),
+       'product', array['ochre','yellow']
+from manufacturers m
+join glaze_lines l on l.manufacturer_id = m.id and l.code = 'PC'
+where m.key = 'testco';
+
+insert into glaze_images (glaze_id, source_url, storage_path, sha256, role,
+                          raw_filename, parse_confidence)
+select g.id, 'https://cdn.example.test/pc-20-chip.jpg', 'l/tt/pc-20.jpg',
+       'sha-testco-PC-20', 'label_chip', 'pc-20_chip.jpg', 'high'
+from glazes g
+join manufacturers m on m.id = g.manufacturer_id
+where m.key = 'testco';
+
+insert into appearances (glaze_id, image_id, cone_id, hex, confidence)
+select g.id, i.id, (select id from cones where name='6'), '#c8a24a', 'high'
+from glazes g
+join manufacturers m on m.id = g.manufacturer_id
+join glaze_images i on i.glaze_id = g.id
+where m.key = 'testco';
+
+do $$
+declare n int; mk text; amaco_id bigint; testco_id bigint;
+begin
+  -- glaze_by_code must answer for the brand asked about, not for whichever row it reached
+  -- first. Its `limit 1` made the wrong answer look like a confident one.
+  select id, manufacturer_key into amaco_id, mk from glaze_by_code('PC-20', 'amaco');
+  if mk is distinct from 'amaco' then
+    raise exception 'glaze_by_code(PC-20, amaco) returned manufacturer %', mk;
+  end if;
+  select id, manufacturer_key into testco_id, mk from glaze_by_code('PC-20', 'testco');
+  if mk is distinct from 'testco' then
+    raise exception 'glaze_by_code(PC-20, testco) returned manufacturer %', mk;
+  end if;
+  if amaco_id = testco_id then
+    raise exception 'both brands resolved to the same glaze id %', amaco_id;
+  end if;
+
+  -- An unknown brand is a miss, never the closest hit.
+  select count(*) into n from glaze_by_code('PC-20', 'nobody');
+  if n <> 0 then raise exception 'glaze_by_code answered for an unknown manufacturer'; end if;
+
+  -- REGRESSION: the detail screen fetches glaze and appearances in one Promise.all. Scoping
+  -- one lookup and not the other pairs one brand's glaze with another brand's photographs.
+  select count(*) into n from glaze_appearances('PC-20', 'testco');
+  if n <> 1 then
+    raise exception 'glaze_appearances(PC-20, testco) returned % rows, expected 1', n;
+  end if;
+  select count(*) into n from glaze_appearances('PC-20', 'amaco');
+  if n <> 2 then
+    raise exception 'glaze_appearances(PC-20, amaco) returned % rows, expected 2', n;
+  end if;
+
+  -- The mark filter's codes come from the device, which knows the manufacturer too. Passing
+  -- the pair keeps an owned PC-20 from surfacing a different brand's PC-20.
+  select count(*) into n from search_glazes(
+    null, p_codes := array['PC-20'], p_code_manufacturers := array['amaco']);
+  if n <> 1 then raise exception 'code+brand filter returned % rows, expected 1', n; end if;
+  select manufacturer_key into mk from search_glazes(
+    null, p_codes := array['PC-20'], p_code_manufacturers := array['testco']) limit 1;
+  if mk is distinct from 'testco' then
+    raise exception 'code+brand filter crossed brands, got %', mk;
+  end if;
+
+  -- Fail closed: an unqualified code list matches nothing rather than every brand at once.
+  select count(*) into n from search_glazes(null, p_codes := array['PC-20']);
+  if n <> 0 then
+    raise exception 'unqualified p_codes matched % rows; it must fail closed', n;
+  end if;
+
+  -- With two brands loaded the manufacturer facet finally discriminates (A7 becomes real).
+  select count(*) into n from search_glazes(
+    null,
+    p_manufacturer := array[(select id from manufacturers where key='testco')]::smallint[]);
+  if n <> 1 then raise exception 'manufacturer facet returned % rows, expected 1', n; end if;
+
+  raise notice 'manufacturer-scoped identity: all assertions passed';
+end $$;
+
 rollback;
