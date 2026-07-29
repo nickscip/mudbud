@@ -43,15 +43,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-find_psql() {
-  local candidate
-  for candidate in psql /opt/homebrew/opt/libpq/bin/psql /usr/local/opt/libpq/bin/psql; do
-    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" --version >/dev/null 2>&1; then
-      echo "$candidate"; return 0
-    fi
-  done
-  echo "no working psql found" >&2; return 1
-}
+source scripts/lib/find-psql.sh
 PSQL="$(find_psql)"
 
 if [[ -z "$DSN" ]]; then
@@ -82,9 +74,13 @@ if [[ "$mode" == "record" ]]; then
       exit 1
     fi
     name=$(basename "$file" .sql); name="${name#*_}"
-    "$PSQL" "$DSN" -v ON_ERROR_STOP=1 -q -c \
-      "insert into supabase_migrations.schema_migrations (version, name)
-       values ('$version', '$name') on conflict (version) do nothing"
+    # Via psql variables rather than spliced into the statement: :'v' quotes whatever the shell
+    # hands over, so a quote in a filename cannot break out of the literal. Interpolation only
+    # happens for commands read from stdin — a -c string is sent to the server untouched.
+    "$PSQL" "$DSN" -v ON_ERROR_STOP=1 -q -v v="$version" -v n="$name" <<'SQL'
+insert into supabase_migrations.schema_migrations (version, name)
+values (:'v', :'n') on conflict (version) do nothing;
+SQL
     echo "  recorded  $version  $name"
   done
   echo

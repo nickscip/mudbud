@@ -35,21 +35,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# A Homebrew psql linked against a mismatched libpq dies with `Symbol not found: _PQbackendPID`
-# before it ever connects, so pick an interpreter that actually loads rather than assuming $PATH
-# is sane.
-find_psql() {
-  local candidate
-  for candidate in psql /opt/homebrew/opt/libpq/bin/psql /usr/local/opt/libpq/bin/psql \
-                   /Applications/Postgres.app/Contents/Versions/latest/bin/psql; do
-    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" --version >/dev/null 2>&1; then
-      echo "$candidate"; return 0
-    fi
-  done
-  echo "no working psql found — install libpq or postgresql" >&2
-  return 1
-}
-
+source scripts/lib/find-psql.sh
 PSQL="$(find_psql)"
 
 if [[ -z "$DSN" ]]; then
@@ -74,7 +60,13 @@ fi
 
 # Unique per run so two invocations cannot collide, and named so an orphan is obviously ours.
 SCRATCH="mudbud_verify_$$"
-BASE_DSN="${DSN%/*}"
+
+# Swap only the database name, keeping any query string — stripping from the last `/` would eat
+# `?sslmode=require` along with the name, and the scratch database would then refuse the very
+# connection settings the real DSN needed.
+DSN_PATH="${DSN%%\?*}"
+DSN_QUERY="${DSN#"$DSN_PATH"}"
+BASE_DSN="${DSN_PATH%/*}"
 
 cleanup() {
   "$PSQL" "$DSN" -q -c "drop database if exists $SCRATCH" >/dev/null 2>&1 || true
@@ -84,7 +76,7 @@ trap cleanup EXIT
 "$PSQL" "$DSN" -v ON_ERROR_STOP=1 -q -c "drop database if exists $SCRATCH"
 "$PSQL" "$DSN" -v ON_ERROR_STOP=1 -q -c "create database $SCRATCH"
 
-SCRATCH_DSN="$BASE_DSN/$SCRATCH"
+SCRATCH_DSN="$BASE_DSN/$SCRATCH$DSN_QUERY"
 
 scripts/apply-migrations.sh "$SCRATCH_DSN" "$PSQL"
 

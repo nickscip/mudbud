@@ -34,10 +34,24 @@ jobs:
         # Editing a migration that has already run somewhere forks the schema silently: a fresh
         # database gets the new text, an already-migrated one keeps the old, and CI passes either
         # way. The fix is always to add another migration.
+        #
+        # The base matters: a PR compares against its target branch, but a push to main must
+        # compare against what main pointed at *before* the push — against origin/main it would be
+        # comparing the branch to itself, and the check could never fire on the one branch where
+        # an edited migration has certainly already run.
         run: |
-          git fetch --quiet origin ${{ github.base_ref || github.event.repository.default_branch }}
-          scripts/check-migrations-append-only.sh \
-            origin/${{ github.base_ref || github.event.repository.default_branch }}
+          if [ -n "${{ github.base_ref }}" ]; then
+            git fetch --quiet origin "${{ github.base_ref }}"
+            base="origin/${{ github.base_ref }}"
+          elif git cat-file -e "${{ github.event.before }}" 2>/dev/null; then
+            base="${{ github.event.before }}"
+          else
+            # A brand-new branch has no before (all zeros), and a force-push may point at history
+            # this clone no longer reaches. The default branch is the only base left.
+            git fetch --quiet origin "${{ github.event.repository.default_branch }}"
+            base="origin/${{ github.event.repository.default_branch }}"
+          fi
+          scripts/check-migrations-append-only.sh "$base"
 
   etl:
     name: ETL — lint, types, tests
