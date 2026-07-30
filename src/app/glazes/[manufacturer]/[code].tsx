@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ActivityIndicator, Linking, ScrollView, View } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -17,13 +17,14 @@ import { PressableScale } from "@/components/PressableScale";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { SegmentedTabs } from "@/components/SegmentedTabs";
 import { SwatchTile } from "@/components/SwatchTile";
-import { stripCode } from "@/components/GlazeCard";
+import { GlazeCard, stripCode } from "@/components/GlazeCard";
 import {
   describeConeRange,
   describePriceFrom,
   manufacturerLabel,
   productHost,
   useGlazeDetail,
+  useSimilarGlazes,
   type GlazeRef,
   type GroupedAppearances,
 } from "@/lib/glazes";
@@ -36,12 +37,13 @@ import { colors } from "@/theme/tokens";
  * link should land on the header and the default tab, not on whatever tab the sender
  * happened to be reading.
  */
-type DetailTab = "application" | "combos" | "photos";
+type DetailTab = "application" | "combos" | "photos" | "similar";
 
 const DETAIL_TABS: { key: DetailTab; label: string }[] = [
   { key: "application", label: "Application" },
   { key: "combos", label: "Combos" },
   { key: "photos", label: "Photos" },
+  { key: "similar", label: "Similar" },
 ];
 
 export default function GlazeDetailScreen() {
@@ -57,6 +59,12 @@ export default function GlazeDetailScreen() {
   const { glaze, appearances, grouped, loading, error } = useGlazeDetail(ref);
   const [viewing, setViewing] = useState<ViewerImage | null>(null);
   const [tab, setTab] = useState<DetailTab>("application");
+
+  // Latched rather than `tab === "similar"`: a glaze's similars cannot change while the page is
+  // open, so once the reader has asked for them, leaving the tab and coming back should cost
+  // nothing. Off until then, which is what keeps opening a glaze at two requests instead of three.
+  const [similarAsked, setSimilarAsked] = useState(false);
+  const similar = useSimilarGlazes(ref, { enabled: similarAsked });
 
   // Marks live in local SQLite, so they resolve instantly and work with no signal.
   const { data: mark } = useLiveQuery(glazeMarkQuery(ref));
@@ -181,7 +189,14 @@ export default function GlazeDetailScreen() {
           ) : null}
 
           <View className="mt-6">
-            <SegmentedTabs tabs={DETAIL_TABS} active={tab} onChange={setTab} />
+            <SegmentedTabs
+              tabs={DETAIL_TABS}
+              active={tab}
+              onChange={(next) => {
+                setTab(next);
+                if (next === "similar") setSimilarAsked(true);
+              }}
+            />
           </View>
         </View>
 
@@ -190,6 +205,7 @@ export default function GlazeDetailScreen() {
         ) : null}
         {tab === "combos" ? <CombosTab grouped={grouped} onEnlarge={setViewing} /> : null}
         {tab === "photos" ? <PhotosTab grouped={grouped} onEnlarge={setViewing} /> : null}
+        {tab === "similar" ? <SimilarTab {...similar} /> : null}
 
         <ImageViewer image={viewing} onClose={() => setViewing(null)} />
 
@@ -302,6 +318,62 @@ function CombosTab({ grouped, onEnlarge }: TabProps) {
       caption={(a) => `over ${a.layered_over_code}${a.cone ? ` · cone ${a.cone}` : ""}`}
       onEnlarge={onEnlarge}
     />
+  );
+}
+
+type SimilarTabProps = ReturnType<typeof useSimilarGlazes>;
+
+/**
+ * Glazes that look like this one, each card a way out of a glaze that is not quite right.
+ * Marks are deliberately not shown here: this list answers "what else looks like this", not
+ * "what do I own".
+ *
+ * Takes the fetch result rather than the ref, because this component unmounts every time the
+ * reader leaves the tab and a hook inside it would re-ask the server on every return. The screen
+ * owns the request; this owns the rendering of it.
+ */
+function SimilarTab({ similars, loading, error }: SimilarTabProps) {
+  const router = useRouter();
+
+  if (loading) {
+    return (
+      <View className="mt-10 items-center">
+        <ActivityIndicator color={colors.clay[500]} />
+      </View>
+    );
+  }
+  if (error) {
+    return <TabEmpty title="Similar glazes" body={error} />;
+  }
+  if (similars.length === 0) {
+    return (
+      <TabEmpty
+        title="Similar glazes"
+        body="Nothing in the catalog shares a colour or finish with this one."
+      />
+    );
+  }
+  return (
+    <View className="mt-6 px-4">
+      <Txt variant="title" className="mb-1 text-base">
+        Similar glazes
+      </Txt>
+      <Txt variant="caption" className="mb-3">
+        Shared colour and finish
+      </Txt>
+      {similars.map((hit) => (
+        <GlazeCard
+          key={hit.id}
+          glaze={hit}
+          onPress={() =>
+            router.push({
+              pathname: "/glazes/[manufacturer]/[code]",
+              params: { manufacturer: hit.manufacturer_key, code: hit.code },
+            })
+          }
+        />
+      ))}
+    </View>
   );
 }
 
