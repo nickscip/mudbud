@@ -24,6 +24,19 @@ def test_core_never_imports_sources() -> None:
     assert not offenders, f"core/ reaches into sources/: {offenders}"
 
 
+class TestUrlIdentity:
+    def test_product_ref_and_external_id_round_trip(self) -> None:
+        adapter = AmacoAdapter()
+        ref = adapter.product_ref("pc-20-blue-rutile")
+        assert str(ref.url) == "https://shop.amaco.com/pc-20-blue-rutile/"
+        assert ref.external_id == "pc-20-blue-rutile"
+        assert adapter.external_id_for(str(ref.url)) == "pc-20-blue-rutile"
+
+    def test_slug_is_tolerant_of_stray_slashes(self) -> None:
+        ref = AmacoAdapter().product_ref("/pc-20-blue-rutile/")
+        assert str(ref.url) == "https://shop.amaco.com/pc-20-blue-rutile/"
+
+
 class TestAmacoConeCategories:
     def test_known_brackets_map(self) -> None:
         adapter = AmacoAdapter()

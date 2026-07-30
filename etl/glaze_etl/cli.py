@@ -79,10 +79,7 @@ def crawl(
     async def run() -> None:
         refs: list[ProductRef]
         if slug:
-            refs = [
-                ProductRef(url=f"https://shop.amaco.com/{s.strip('/')}/", external_id=s.strip("/"))
-                for s in slug
-            ]
+            refs = [adapter.product_ref(s) for s in slug]
         else:
             refs = []
             async for ref in adapter.discover():
@@ -289,7 +286,8 @@ def load(
                 order by url, fetched_at desc
             """
             if slug:
-                patterns = [f"https://shop.amaco.com/{s.strip('/')}/" for s in slug]
+                # Must byte-match what the Fetcher stored, so build via the adapter.
+                patterns = [str(adapter.product_ref(s).url) for s in slug]
                 rows = conn.execute(
                     query.format(where="where url = any(%s)"), (patterns,)
                 ).fetchall()
@@ -363,12 +361,7 @@ def sync(
         refs: list[ProductRef] = []
         if slug:
             # Targeted re-sync, e.g. after fixing the grammar for one product.
-            refs = [
-                ProductRef(
-                    url=f"https://shop.amaco.com/{s.strip('/')}/", external_id=s.strip("/")
-                )
-                for s in slug
-            ]
+            refs = [adapter.product_ref(s) for s in slug]
         else:
             async for ref in adapter.discover():
                 refs.append(ref)

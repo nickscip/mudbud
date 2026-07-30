@@ -49,6 +49,24 @@ class SourceAdapter(ABC):
         becomes a fact.
         """
 
+    @abstractmethod
+    def product_ref(self, slug: str) -> ProductRef:
+        """Build the canonical ProductRef for a slug someone typed at the CLI.
+
+        The URL template is source knowledge — AMACO is ``/{slug}/``, Mayco is
+        ``/product/{slug}/`` — and the result must byte-match what the Fetcher stored,
+        because targeted loads look snapshots up by URL.
+        """
+
+    @abstractmethod
+    def external_id_for(self, url: str) -> str:
+        """Derive the stable per-source key from a product URL.
+
+        The inverse of ``product_ref``. Kept on the adapter because the answer differs
+        per source path shape; two ad-hoc copies of this once disagreed about whether
+        the id is the whole path or its last segment.
+        """
+
     def cone_range_for_category(self, category: str) -> tuple[str, str] | None:
         """Map the source's cone-category label to a (from, to) pair of cone names.
 

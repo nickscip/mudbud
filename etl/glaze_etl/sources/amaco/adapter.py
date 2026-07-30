@@ -26,6 +26,13 @@ from glaze_etl.sources.amaco.vocabulary import CATEGORY_CONE_RANGE, GLAZE_LINE_C
 
 SITEMAP_URL = "https://shop.amaco.com/xmlsitemap.php?type=products&page={page}"
 
+PRODUCT_URL = "https://shop.amaco.com/{slug}/"
+
+
+def _external_id(url: str) -> str:
+    """AMACO's stable key is the whole URL path — a single slug segment."""
+    return urlsplit(url).path.strip("/")
+
 _GLAZE_SLUG_RE = re.compile(
     rf"^({'|'.join(c.lower() for c in GLAZE_LINE_CODES)})-\d{{1,3}}(-|$)",
 )
@@ -90,6 +97,13 @@ class AmacoAdapter(SourceAdapter):
     def interpret_image(self, img: ParsedImage, ctx: ParsedProduct) -> ImageFacts:
         return interpret_filename(img.raw_filename, ctx.code, ctx.name)
 
+    def product_ref(self, slug: str) -> ProductRef:
+        clean = slug.strip("/")
+        return ProductRef(url=PRODUCT_URL.format(slug=clean), external_id=clean)
+
+    def external_id_for(self, url: str) -> str:
+        return _external_id(url)
+
     def cone_range_for_category(self, category: str) -> tuple[str, str] | None:
         return CATEGORY_CONE_RANGE.get(category)
 
@@ -109,7 +123,5 @@ def parse_sitemap(xml: str) -> list[ProductRef]:
                 lastmod = datetime.fromisoformat(raw.replace("Z", "+00:00"))
             except ValueError:
                 lastmod = None
-        refs.append(
-            ProductRef(url=url, external_id=urlsplit(url).path.strip("/"), lastmod=lastmod)
-        )
+        refs.append(ProductRef(url=url, external_id=_external_id(url), lastmod=lastmod))
     return refs

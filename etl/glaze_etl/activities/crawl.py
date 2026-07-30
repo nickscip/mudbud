@@ -41,7 +41,6 @@ class DiscoverInput:
 class FetchInput:
     manufacturer: str
     url: str
-    external_id: str
 
 
 @dataclass
@@ -99,7 +98,10 @@ async def fetch_product(payload: FetchInput) -> FetchOutput:
     """
     settings = Settings()
     adapter = _adapter(payload.manufacturer)
-    ref = ProductRef(url=payload.url, external_id=payload.external_id)
+    # The external id is derived here rather than carried in the payload: slug-from-URL
+    # is source knowledge, and a workflow computing it its own way once disagreed with
+    # the adapter about whether the id is the whole path or its last segment.
+    ref = ProductRef(url=payload.url, external_id=adapter.external_id_for(payload.url))
 
     with db_connect(settings.database_url, autocommit=True) as conn:
         store = PostgresSnapshotStore(conn)
