@@ -276,6 +276,15 @@ test-enforced: `glaze_etl/core/` never imports from `glaze_etl/sources/`
 one `sources/mayco/` package, one `SOURCES` entry, one `ManufacturerKey` member, and a
 fixtures directory — no core, CLI, activity, or workflow edits.
 
+A review pass on the same branch cleaned up what the seam work exposed. Worth knowing
+before the second source lands: every `raw_snapshots` query now lives in
+`core/store.py` (three modules had grown their own, and they had drifted on whether to
+scope by manufacturer — the ingest activity did not, so a mismatched key/URL pair would
+have parsed one source's HTML with another's parser); `adapter_for` raises an
+explanatory error rather than a `KeyError` for an enum member with no adapter, which is
+exactly the half-landed state F10 passes through; and a test asserts every
+`ManufacturerKey` member has one.
+
 - **F1 · `core/loader.py` imported an AMACO module** — **done**. The category-to-cone-range
   mapping is `SourceAdapter.cone_range_for_category` (default `None`); the pipeline
   computes it where it holds the adapter and passes it to `upsert_line`. The miss still

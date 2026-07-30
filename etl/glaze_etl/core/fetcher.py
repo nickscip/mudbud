@@ -1,16 +1,23 @@
 """Polite, conditional HTTP fetching with an immutable snapshot log.
 
-Four constraints shape this class, all measured against the live site rather than assumed:
+Source-agnostic: the two things that vary per site arrive as constructor arguments —
+`politeness` (crawl delay and user agent) and `volatile_patterns` (the per-request noise
+to ignore when hashing). Both are adapter properties. What stays here is the machinery
+that consumes them, so no caller can forget to pace itself.
 
-* **AMACO's robots.txt sets `Crawl-delay: 10`** for AI agents (and no `Disallow: /`), so
-  a full ~300-SKU glaze pass takes ~50 minutes no matter what. The delay is enforced
-  here, in one place, rather than trusted to callers.
-* **The sitemap carries no `lastmod`.** Change detection cannot come from the work list.
-* **Nor can it come from HTTP validators.** BigCommerce returns no `ETag` on product
+The design is shaped by four constraints measured against AMACO, the first source. They
+are recorded because they are what the machinery is *for*, not because they are
+universal — a second source re-measures its own and supplies the answers the same way:
+
+* **robots.txt set `Crawl-delay: 10`** for AI agents (and no `Disallow: /`), so a full
+  ~300-SKU glaze pass takes ~50 minutes no matter what.
+* **The sitemap carried no `lastmod`.** Change detection cannot come from the work list.
+  A source whose sitemap does carry one prunes earlier, in `discover`.
+* **Nor could it come from HTTP validators.** BigCommerce returns no `ETag` on product
   pages and ignores `If-Modified-Since` — a repeat fetch is always a fresh 200. The
   conditional headers are still sent, because they cost nothing and a CDN change would
   start honouring them, but nothing depends on a 304 arriving.
-* **So change detection rests entirely on a canonical content hash.** Every response is
+* **So change detection rests entirely on a canonical content hash.** Every response was
   byte-unique thanks to an embedded analytics session id, so the hash has to ignore that
   noise; see `canonicalize_for_hash`. A snapshot row is written only when the canonical
   hash differs from the newest one held for that URL, and retention prunes to the N most
