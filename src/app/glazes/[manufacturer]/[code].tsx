@@ -22,7 +22,7 @@ import { GlazeCard, stripCode } from "@/components/GlazeCard";
 import {
   describeConeRange,
   describePriceFrom,
-  manufacturerLabel,
+  photographCredit,
   productHost,
   useGlazeDetail,
   useSimilarGlazes,
@@ -101,10 +101,7 @@ export default function GlazeDetailScreen() {
   }
 
   const hero = grouped.plain[0] ?? appearances[0];
-  const brandLine = [
-    manufacturerLabel(glaze.manufacturer_key),
-    glaze.line_name ?? glaze.line_code,
-  ]
+  const brandLine = [glaze.manufacturer_name, glaze.line_name ?? glaze.line_code]
     .filter(Boolean)
     .join(" · ");
   const factsLine = [
@@ -114,6 +111,13 @@ export default function GlazeDetailScreen() {
     .filter(Boolean)
     .join(" · ");
   const host = productHost(glaze.product_url);
+  // Every rail and the hero open the same viewer, so the credit fallback belongs on the
+  // one seam they share rather than at each call site, where it would drift.
+  const enlarge = (image: ViewerImage) =>
+    setViewing({
+      ...image,
+      credit: image.credit ?? photographCredit(glaze.manufacturer_name),
+    });
 
   return (
     <View className="flex-1">
@@ -128,7 +132,7 @@ export default function GlazeDetailScreen() {
             <PressableScale
               onPress={() =>
                 hero &&
-                setViewing({
+                enlarge({
                   uri: hero.source_url,
                   caption: glaze.name,
                   credit: hero.credit,
@@ -240,10 +244,14 @@ export default function GlazeDetailScreen() {
         </View>
 
         {tab === "application" ? (
-          <ApplicationTab grouped={grouped} onEnlarge={setViewing} />
+          <ApplicationTab
+            grouped={grouped}
+            onEnlarge={enlarge}
+            manufacturerName={glaze.manufacturer_name}
+          />
         ) : null}
-        {tab === "combos" ? <CombosTab grouped={grouped} onEnlarge={setViewing} /> : null}
-        {tab === "photos" ? <PhotosTab grouped={grouped} onEnlarge={setViewing} /> : null}
+        {tab === "combos" ? <CombosTab grouped={grouped} onEnlarge={enlarge} /> : null}
+        {tab === "photos" ? <PhotosTab grouped={grouped} onEnlarge={enlarge} /> : null}
         {tab === "similar" ? <SimilarTab {...similar} /> : null}
 
         <ImageViewer image={viewing} onClose={() => setViewing(null)} />
@@ -256,7 +264,7 @@ export default function GlazeDetailScreen() {
               <Ionicons name="open-outline" size={18} color={colors.stone[500]} />
               <View className="ml-3 flex-1">
                 <Txt variant="label" className="text-xs">
-                  Photographs & data © {manufacturerLabel(glaze.manufacturer_key)}
+                  Photographs & data © {glaze.manufacturer_name}
                 </Txt>
                 <Txt variant="caption" className="text-xs">
                   View {glaze.code}
@@ -295,7 +303,14 @@ function TabEmpty({ title, body }: { title: string; body: string }) {
 }
 
 /** How the glaze behaves as it goes on: coat thickness, and the clay under it. */
-function ApplicationTab({ grouped, onEnlarge }: TabProps) {
+function ApplicationTab({
+  grouped,
+  onEnlarge,
+  manufacturerName,
+}: TabProps & {
+  /** Only this tab's copy names the brand, so only this tab asks for it. */
+  manufacturerName: string;
+}) {
   return (
     <>
       {grouped.coats.length > 0 ? (
@@ -310,9 +325,9 @@ function ApplicationTab({ grouped, onEnlarge }: TabProps) {
             </Txt>
             <Txt variant="caption">thin → thick</Txt>
           </View>
-          {/* AMACO publishes this as one photograph with its own captions, and for some
-              layouts we cannot yet cut it into per-coat regions. Showing it whole beats
-              showing nothing — the information is visible, just not separated. */}
+          {/* The manufacturer publishes this as one photograph with its own captions, and
+              for some layouts we cannot yet cut it into per-coat regions. Showing it whole
+              beats showing nothing — the information is visible, just not separated. */}
           <Image
             source={{ uri: grouped.unsplitComposite.source_url }}
             style={{ width: "100%", aspectRatio: 4 / 3, borderRadius: 16 }}
@@ -320,7 +335,8 @@ function ApplicationTab({ grouped, onEnlarge }: TabProps) {
             transition={220}
           />
           <Txt variant="caption" className="mt-2">
-            Shown as AMACO published it — the coat labels are printed in the image.
+            Shown as {manufacturerName} published it — the coat labels are printed in the
+            image.
           </Txt>
         </View>
       ) : (

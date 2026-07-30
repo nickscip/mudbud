@@ -55,6 +55,13 @@ export type GlazeHit = {
   clay_bodies_shown: string[];
   tier: "match" | "near";
   rank: number;
+  /**
+   * How the manufacturer writes its own name, and where it lives. Appended after `rank`
+   * rather than placed beside `manufacturer_key`, because `glaze_hit` is a positional
+   * composite type and reordering it would shift every attribute after the insertion.
+   */
+  manufacturer_name: string;
+  manufacturer_site_url: string | null;
 };
 
 /** A region of a source image, in that image's own pixels. */
