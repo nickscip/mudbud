@@ -54,7 +54,7 @@ class Loader:
 
     # ------------------------------------------------------------------ lines
     def upsert_line(
-        self, product: ParsedProduct, cone_range: tuple[str, str] | None
+        self, product: ParsedProduct, *, cone_range: tuple[str, str] | None
     ) -> int | None:
         """``cone_range`` comes from the adapter's `cone_range_for_category` — the
         category labels are source vocabulary, so the mapping cannot live here."""

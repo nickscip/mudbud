@@ -20,10 +20,19 @@ SOURCES: dict[ManufacturerKey, Callable[[], SourceAdapter]] = {
 
 
 def adapter_for(key: ManufacturerKey | str) -> SourceAdapter:
-    """Resolve a manufacturer key — CLI string or enum member — to a fresh adapter."""
+    """Resolve a manufacturer key — CLI string or enum member — to a fresh adapter.
+
+    Both failure paths raise the same ValueError: a string that is not a
+    ManufacturerKey at all, and a member that exists but has no adapter registered
+    yet — the half-landed state of adding a source's enum member and migration
+    before its adapter package.
+    """
+    known = ", ".join(sorted(m.value for m in SOURCES))
     try:
         member = ManufacturerKey(key)
     except ValueError:
-        known = ", ".join(sorted(m.value for m in SOURCES))
         raise ValueError(f"no adapter for {key!r}; known sources: {known}") from None
-    return SOURCES[member]()
+    build = SOURCES.get(member)
+    if build is None:
+        raise ValueError(f"no adapter for {key!r}; known sources: {known}")
+    return build()

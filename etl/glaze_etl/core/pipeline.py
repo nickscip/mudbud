@@ -47,7 +47,7 @@ async def ingest_product(
         if product.cone_category
         else None
     )
-    line_id = loader.upsert_line(product, cone_range)
+    line_id = loader.upsert_line(product, cone_range=cone_range)
     glaze_id = loader.upsert_glaze(product, line_id)
 
     _report_unknown_badges(loader, product)
