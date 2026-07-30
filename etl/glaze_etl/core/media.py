@@ -48,7 +48,7 @@ class RegionReading:
     bbox: BBox
     color: ColorReading
     ordinal: int
-    """0-based position left to right, which is AMACO's thin-to-thick order."""
+    """0-based position left to right; the adapter's `coat_order` says what it means."""
 
 
 @dataclass(frozen=True)

@@ -11,6 +11,7 @@ import httpx
 from selectolax.parser import HTMLParser
 
 from glaze_etl.core.models import (
+    CoatLevel,
     ImageFacts,
     ManufacturerKey,
     ParsedImage,
@@ -22,9 +23,30 @@ from glaze_etl.core.models import (
 from glaze_etl.core.source_adapter import SourceAdapter
 from glaze_etl.sources.amaco.filename_grammar import interpret_filename
 from glaze_etl.sources.amaco.parser import parse_product
-from glaze_etl.sources.amaco.vocabulary import GLAZE_LINE_CODES
+from glaze_etl.sources.amaco.vocabulary import CATEGORY_CONE_RANGE, GLAZE_LINE_CODES
 
 SITEMAP_URL = "https://shop.amaco.com/xmlsitemap.php?type=products&page={page}"
+
+PRODUCT_URL = "https://shop.amaco.com/{slug}/"
+
+
+def _external_id(url: str) -> str:
+    """AMACO's stable key is the whole URL path — a single slug segment."""
+    return urlsplit(url).path.strip("/")
+
+
+# Per-request noise BigCommerce and Cloudflare inject into every response. Measured by
+# fetching the same product twice ten seconds apart: the bodies were byte-for-byte
+# identical except for these three, and nothing here is product data.
+VOLATILE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # BigCommerce's BODL analytics blob — a base64 payload holding a fresh session UUID
+    # and first-touch timestamp on every single request.
+    re.compile(r"window\.bodl\s*=\s*JSON\.parse\(decodeBase64\(\"[^\"]*\"\)\)"),
+    # Cloudflare's challenge parameters: a request ray id and an epoch stamp.
+    re.compile(r"window\.__CF\$cv\$params\s*=\s*\{[^}]*\}"),
+    # The analytics event block repeats the timestamp and a per-visit id.
+    re.compile(r"\"(?:timestamp|visit_id|session_id|event_id)\"\s*:\s*\"[^\"]*\""),
+)
 
 _GLAZE_SLUG_RE = re.compile(
     rf"^({'|'.join(c.lower() for c in GLAZE_LINE_CODES)})-\d{{1,3}}(-|$)",
@@ -49,6 +71,12 @@ class AmacoAdapter(SourceAdapter):
     # robots.txt lists AI agents (ClaudeBot, GPTBot, anthropic-ai, ...) with a
     # Crawl-delay of 10 and *no* Disallow: /. Product pages are permitted; the delay
     # is honoured by the Fetcher, and a full glaze pass therefore takes ~50 minutes.
+
+    coat_order = (CoatLevel.LIGHT, CoatLevel.SLIGHTLY_LIGHT, CoatLevel.SLIGHTLY_HEAVY)
+    """AMACO's composites read thin-to-thick left to right, three tiles per image —
+    the splitter refuses anything that is not exactly three, so HEAVY never appears."""
+
+    volatile_patterns = VOLATILE_PATTERNS
 
     def __init__(self, client: httpx.AsyncClient | None = None) -> None:
         self._client = client
@@ -90,6 +118,16 @@ class AmacoAdapter(SourceAdapter):
     def interpret_image(self, img: ParsedImage, ctx: ParsedProduct) -> ImageFacts:
         return interpret_filename(img.raw_filename, ctx.code, ctx.name)
 
+    def product_ref(self, slug: str) -> ProductRef:
+        clean = slug.strip("/")
+        return ProductRef(url=PRODUCT_URL.format(slug=clean), external_id=clean)
+
+    def external_id_for(self, url: str) -> str:
+        return _external_id(url)
+
+    def cone_range_for_category(self, category: str) -> tuple[str, str] | None:
+        return CATEGORY_CONE_RANGE.get(category)
+
 
 def parse_sitemap(xml: str) -> list[ProductRef]:
     """Read <url><loc>/<lastmod> pairs. Tolerant of the namespace prefix varying."""
@@ -106,7 +144,5 @@ def parse_sitemap(xml: str) -> list[ProductRef]:
                 lastmod = datetime.fromisoformat(raw.replace("Z", "+00:00"))
             except ValueError:
                 lastmod = None
-        refs.append(
-            ProductRef(url=url, external_id=urlsplit(url).path.strip("/"), lastmod=lastmod)
-        )
+        refs.append(ProductRef(url=url, external_id=_external_id(url), lastmod=lastmod))
     return refs

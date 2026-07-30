@@ -84,11 +84,10 @@ class SyncManufacturerWorkflow:
                 # retry cannot collapse the gap between two requests.
                 await workflow.sleep(CRAWL_DELAY)
 
-            external_id = url.rstrip("/").rsplit("/", 1)[-1]
             try:
                 fetched = await workflow.execute_activity(
                     fetch_product,
-                    FetchInput(payload.manufacturer, url, external_id),
+                    FetchInput(payload.manufacturer, url),
                     start_to_close_timeout=timedelta(minutes=3),
                     retry_policy=FETCH_RETRY,
                 )

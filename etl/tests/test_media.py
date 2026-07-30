@@ -17,7 +17,7 @@ from glaze_etl.core.media import (
     storage_key,
 )
 
-IMAGES = Path(__file__).parent / "fixtures" / "images"
+IMAGES = Path(__file__).parent / "fixtures" / "amaco" / "images"
 URL = "https://cdn11.bigcommerce.com/s-a0h9fhqogk/images/stencil/1280x1280/x.jpg"
 
 

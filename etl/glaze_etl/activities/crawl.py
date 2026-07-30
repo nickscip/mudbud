@@ -13,22 +13,20 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-import psycopg
 from temporalio import activity
 
-from glaze_etl.core.blob_store import BlobStore, LocalBlobStore, SupabaseBlobStore
-from glaze_etl.core.color import Lab
-from glaze_etl.core.color_namer import ColorNamer, ColorTerm
+from glaze_etl.core.blob_store import blob_store_for
+from glaze_etl.core.color_namer import load_color_namer
 from glaze_etl.core.config import Settings
 from glaze_etl.core.db import connect as db_connect
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import MediaProcessor
-from glaze_etl.core.models import ManufacturerKey, ProductRef, RawSnapshot
+from glaze_etl.core.models import ProductRef
 from glaze_etl.core.normalizer import Normalizer, load_vocabularies
 from glaze_etl.core.pipeline import ingest_product
 from glaze_etl.core.store import PostgresSnapshotStore
-from glaze_etl.sources.amaco.adapter import AmacoAdapter
+from glaze_etl.sources import adapter_for
 
 
 @dataclass
@@ -41,7 +39,6 @@ class DiscoverInput:
 class FetchInput:
     manufacturer: str
     url: str
-    external_id: str
 
 
 @dataclass
@@ -65,12 +62,6 @@ class IngestOutput:
     appearances: int
 
 
-def _adapter(key: str) -> AmacoAdapter:
-    if key != ManufacturerKey.AMACO.value:
-        raise ValueError(f"no adapter for {key!r}")
-    return AmacoAdapter()
-
-
 @activity.defn
 async def discover_products(payload: DiscoverInput) -> list[str]:
     """Return the glaze product URLs worth fetching.
@@ -79,7 +70,7 @@ async def discover_products(payload: DiscoverInput) -> list[str]:
     durable: a worker restart mid-crawl resumes from the same list rather than re-deriving
     a possibly different one.
     """
-    adapter = _adapter(payload.manufacturer)
+    adapter = adapter_for(payload.manufacturer)
     urls: list[str] = []
     async for ref in adapter.discover():
         urls.append(str(ref.url))
@@ -98,8 +89,11 @@ async def fetch_product(payload: FetchInput) -> FetchOutput:
     worker restart instead of turning into a burst.
     """
     settings = Settings()
-    adapter = _adapter(payload.manufacturer)
-    ref = ProductRef(url=payload.url, external_id=payload.external_id)
+    adapter = adapter_for(payload.manufacturer)
+    # The external id is derived here rather than carried in the payload: slug-from-URL
+    # is source knowledge, and a workflow computing it its own way once disagreed with
+    # the adapter about whether the id is the whole path or its last segment.
+    ref = ProductRef(url=payload.url, external_id=adapter.external_id_for(payload.url))
 
     with db_connect(settings.database_url, autocommit=True) as conn:
         store = PostgresSnapshotStore(conn)
@@ -109,8 +103,9 @@ async def fetch_product(payload: FetchInput) -> FetchOutput:
             fetcher = Fetcher(
                 client,
                 store,
-                ManufacturerKey(payload.manufacturer),
+                adapter.manufacturer,
                 adapter.politeness,
+                volatile_patterns=adapter.volatile_patterns,
                 retention=settings.snapshot_retention,
                 max_attempts=settings.max_attempts,
             )
@@ -132,31 +127,17 @@ async def ingest_snapshot(payload: IngestInput) -> IngestOutput:
     wasteful when the durable copy is already in Postgres.
     """
     settings = Settings()
-    adapter = _adapter(payload.manufacturer)
+    adapter = adapter_for(payload.manufacturer)
 
     with db_connect(settings.database_url) as conn:
-        row = conn.execute(
-            """
-            select url, fetched_at, http_status, etag, content_hash, body
-            from raw_snapshots where url = %s
-            order by fetched_at desc limit 1
-            """,
-            (payload.url,),
-        ).fetchone()
-        if row is None:
-            raise ValueError(f"no snapshot stored for {payload.url}")
-
-        snapshot = RawSnapshot(
-            url=row[0],
-            fetched_at=row[1],
-            http_status=row[2],
-            etag=row[3],
-            content_hash=row[4],
-            body=row[5],
-        )
+        snapshot = PostgresSnapshotStore(conn).newest(payload.url, adapter.manufacturer)
+        if snapshot is None:
+            raise ValueError(
+                f"no snapshot stored for {payload.url} under {adapter.manufacturer.value}"
+            )
 
         loader = Loader(conn, Normalizer(load_vocabularies(conn)))
-        namer = _color_namer(conn)
+        namer = load_color_namer(conn)
 
         async with httpx.AsyncClient(
             timeout=settings.request_timeout_s,
@@ -165,7 +146,7 @@ async def ingest_snapshot(payload: IngestInput) -> IngestOutput:
             media = (
                 MediaProcessor(
                     client,
-                    _blob_store(settings, payload.manufacturer),
+                    blob_store_for(settings, payload.manufacturer),
                     byte_cache=settings.blob_dir,
                 )
                 if payload.with_images
@@ -192,41 +173,6 @@ async def finalise(manufacturer: str) -> dict[str, int]:
         conn.commit()
     activity.logger.info("finalise: %d cone ranges inherited, %d layering links", cones, links)
     return {"cone_inherited": cones, "layer_links": links}
-
-
-def _blob_store(settings: Settings, manufacturer: str) -> BlobStore:
-    """Same rule as the CLI: hosted private bucket when configured, local cache otherwise.
-
-    One bucket per manufacturer, derived — `mudbud_amaco`.
-    """
-    if settings.supabase_url and settings.secret_key:
-        return SupabaseBlobStore(
-            settings.supabase_url, settings.secret_key, settings.bucket_for(manufacturer)
-        )
-    return LocalBlobStore(settings.blob_dir)
-
-
-def _color_namer(conn: psycopg.Connection[tuple[object, ...]]) -> ColorNamer:
-    rows = conn.execute(
-        "select term, lab_l, lab_a, lab_b, max_delta_e, is_potter_term, family from color_terms"
-    ).fetchall()
-    vocabulary: list[ColorTerm] = []
-    for term, lightness, green_red, blue_yellow, radius, potter, family in rows:
-        vocabulary.append(
-            ColorTerm(
-                str(term),
-                Lab(_f(lightness), _f(green_red), _f(blue_yellow)),
-                _f(radius),
-                bool(potter),
-                str(family) if family else None,
-            )
-        )
-    return ColorNamer(vocabulary)
-
-
-def _f(value: object) -> float:
-    assert isinstance(value, int | float)
-    return float(value)
 
 
 ALL_ACTIVITIES: Sequence[Callable[..., Any]] = [

@@ -15,7 +15,7 @@ from PIL import Image
 from glaze_etl.core.color import ColorReading, Lab, delta_e, read_color, to_hex
 from glaze_etl.core.color_namer import ColorNamer, ColorTerm
 
-IMAGES = Path(__file__).parent / "fixtures" / "images"
+IMAGES = Path(__file__).parent / "fixtures" / "amaco" / "images"
 MIGRATION = (
     Path(__file__).parents[2] / "supabase" / "migrations" / "20260726000100_vocabularies.sql"
 )

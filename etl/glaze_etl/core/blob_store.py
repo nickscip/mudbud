@@ -15,6 +15,8 @@ from typing import Any, Protocol
 import httpx
 import structlog
 
+from glaze_etl.core.config import Settings
+
 log = structlog.get_logger(__name__)
 
 
@@ -131,3 +133,32 @@ class SupabaseBlobStore:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+
+def blob_store_for(
+    settings: Settings,
+    manufacturer: str,
+    *,
+    blob_dir: Path | None = None,
+    known_keys: set[str] | None = None,
+) -> BlobStore:
+    """Prefer the hosted private bucket when configured, else the local cache.
+
+    Chosen by whether credentials exist rather than by a flag, so the same command works
+    in development and against a real project without anyone remembering to pass
+    anything. The bucket is per manufacturer — `mudbud_amaco` — so a second source
+    cannot write its images into the first one's bucket.
+
+    ``blob_dir`` overrides the configured cache directory for callers that expose it as
+    an option; ``known_keys`` preloads what the bucket already holds, which turns "is
+    this blob uploaded?" from an HTTP round trip per blob into nothing.
+    """
+    if settings.supabase_url and settings.secret_key:
+        bucket = settings.bucket_for(manufacturer)
+        log.info("blobs.supabase", bucket=bucket)
+        return SupabaseBlobStore(
+            settings.supabase_url, settings.secret_key, bucket, known_keys=known_keys
+        )
+    path = blob_dir if blob_dir is not None else settings.blob_dir
+    log.info("blobs.local", path=str(path))
+    return LocalBlobStore(path)

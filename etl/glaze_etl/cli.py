@@ -16,24 +16,24 @@ import psycopg
 import structlog
 import typer
 
-from glaze_etl.core.blob_store import BlobStore, LocalBlobStore, SupabaseBlobStore
-from glaze_etl.core.color import Lab
-from glaze_etl.core.color_namer import ColorNamer, ColorTerm
+from glaze_etl.core.blob_store import blob_store_for
+from glaze_etl.core.color_namer import load_color_namer
 from glaze_etl.core.config import Settings
 from glaze_etl.core.db import connect as db_connect
 from glaze_etl.core.db import stored_object_keys
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import MediaProcessor
-from glaze_etl.core.models import ManufacturerKey, ProductRef, RawSnapshot
+from glaze_etl.core.models import ProductRef, RawSnapshot
 from glaze_etl.core.normalizer import Normalizer, load_vocabularies
 from glaze_etl.core.pipeline import ingest_product
+from glaze_etl.core.source_adapter import SourceAdapter
 from glaze_etl.core.store import (
     InMemorySnapshotStore,
     PostgresSnapshotStore,
     SnapshotStore,
 )
-from glaze_etl.sources.amaco.adapter import AmacoAdapter
+from glaze_etl.sources import adapter_for
 
 app = typer.Typer(add_completion=False, help="Glaze catalog ETL.")
 
@@ -46,15 +46,18 @@ structlog.configure(
 )
 log = structlog.get_logger("glaze_etl")
 
+ManufacturerOption = Annotated[str, typer.Option(help="Source key, e.g. amaco.")]
+
 
 @app.command()
 def discover(
     limit: Annotated[int, typer.Option(help="Stop after this many refs.")] = 20,
+    manufacturer: ManufacturerOption = "amaco",
 ) -> None:
     """List the glaze products the sitemap exposes. Costs one request, no page fetches."""
 
     async def run() -> None:
-        adapter = AmacoAdapter()
+        adapter = adapter_for(manufacturer)
         shown = 0
         async for ref in adapter.discover():
             typer.echo(ref.external_id)
@@ -71,18 +74,16 @@ def crawl(
     slug: Annotated[list[str] | None, typer.Argument(help="Specific slugs, or all.")] = None,
     limit: Annotated[int, typer.Option(help="Cap products when crawling everything.")] = 5,
     dry_run: Annotated[bool, typer.Option(help="Skip the database entirely.")] = False,
+    manufacturer: ManufacturerOption = "amaco",
 ) -> None:
     """Fetch, parse and interpret. Honours the 10s crawl-delay, so budget ~10s per product."""
     settings = Settings()
-    adapter = AmacoAdapter()
+    adapter = adapter_for(manufacturer)
 
     async def run() -> None:
         refs: list[ProductRef]
         if slug:
-            refs = [
-                ProductRef(url=f"https://shop.amaco.com/{s.strip('/')}/", external_id=s.strip("/"))
-                for s in slug
-            ]
+            refs = [adapter.product_ref(s) for s in slug]
         else:
             refs = []
             async for ref in adapter.discover():
@@ -101,8 +102,9 @@ def crawl(
                 fetcher = Fetcher(
                     client,
                     store,
-                    ManufacturerKey.AMACO,
+                    adapter.manufacturer,
                     adapter.politeness,
+                    volatile_patterns=adapter.volatile_patterns,
                     retention=settings.snapshot_retention,
                     max_attempts=settings.max_attempts,
                 )
@@ -124,7 +126,7 @@ def _store_for(conn: psycopg.Connection[tuple[object, ...]] | None) -> SnapshotS
     return InMemorySnapshotStore() if conn is None else PostgresSnapshotStore(conn)
 
 
-def _report(adapter: AmacoAdapter, snapshot: RawSnapshot) -> None:
+def _report(adapter: SourceAdapter, snapshot: RawSnapshot) -> None:
     """Print what the pure stages made of one page, so a bad parse is obvious by eye."""
     product = adapter.parse(snapshot)
     badges = product.badges
@@ -175,6 +177,7 @@ def _report(adapter: AmacoAdapter, snapshot: RawSnapshot) -> None:
 @app.command()
 def reparse(
     dry_run: Annotated[bool, typer.Option(help="Report only; write nothing.")] = True,
+    manufacturer: ManufacturerOption = "amaco",
 ) -> None:
     """Replay stored snapshots through the current grammar. No network.
 
@@ -182,29 +185,14 @@ def reparse(
     here, against ~50 minutes for a re-crawl at AMACO's mandated delay.
     """
     settings = Settings()
-    adapter = AmacoAdapter()
+    adapter = adapter_for(manufacturer)
     counts = {"high": 0, "medium": 0, "low": 0}
     products = 0
 
     with db_connect(settings.database_url) as conn:
-        # Newest snapshot per URL only; older ones are history, not current truth.
-        rows = conn.execute(
-            """
-            select distinct on (url) url, fetched_at, http_status, etag, content_hash, body
-            from raw_snapshots
-            order by url, fetched_at desc
-            """
-        ).fetchall()
+        snapshots = PostgresSnapshotStore(conn).newest_per_url(adapter.manufacturer)
 
-    for url, fetched_at, status, etag, digest, body in rows:
-        snapshot = RawSnapshot(
-            url=url,
-            fetched_at=fetched_at,
-            http_status=status,
-            etag=etag,
-            content_hash=digest,
-            body=body,
-        )
+    for snapshot in snapshots:
         product = adapter.parse(snapshot)
         products += 1
         for image in product.images:
@@ -216,57 +204,12 @@ def reparse(
         typer.echo("dry run: nothing written")
 
 
-def _blob_store(
-    settings: Settings,
-    blob_dir: str,
-    manufacturer: str,
-    known_keys: set[str] | None = None,
-) -> BlobStore:
-    """Prefer the hosted private bucket when configured, else the local cache.
-
-    Chosen by whether credentials exist rather than by a flag, so the same command works in
-    development and against a real project without anyone remembering to pass anything.
-
-    The bucket is per manufacturer — `mudbud_amaco` — so a second source cannot write its
-    images into the first one's bucket.
-    """
-    if settings.supabase_url and settings.secret_key:
-        bucket = settings.bucket_for(manufacturer)
-        log.info("blobs.supabase", bucket=bucket)
-        return SupabaseBlobStore(
-            settings.supabase_url, settings.secret_key, bucket, known_keys=known_keys
-        )
-    log.info("blobs.local", path=blob_dir)
-    return LocalBlobStore(Path(blob_dir))
-
-
-def _color_namer(conn: psycopg.Connection[tuple[object, ...]]) -> ColorNamer:
-    rows = conn.execute(
-        "select term, lab_l, lab_a, lab_b, max_delta_e, is_potter_term, family from color_terms"
-    ).fetchall()
-    vocabulary: list[ColorTerm] = []
-    for term, lightness, green_red, blue_yellow, radius, potter, family in rows:
-        centroid = Lab(_f(lightness), _f(green_red), _f(blue_yellow))
-        vocabulary.append(
-            ColorTerm(
-                str(term), centroid, _f(radius), bool(potter),
-                str(family) if family else None,
-            )
-        )
-    return ColorNamer(vocabulary)
-
-
-def _f(value: object) -> float:
-    """psycopg hands back `object` for numeric columns; narrow it once, here."""
-    assert isinstance(value, int | float)
-    return float(value)
-
-
 @app.command()
 def load(
     slug: Annotated[list[str] | None, typer.Argument(help="Specific slugs, or all stored.")] = None,
     images: Annotated[bool, typer.Option(help="Download and measure images.")] = True,
     blob_dir: Annotated[str, typer.Option(help="Where cached images go.")] = "./.blobs",
+    manufacturer: ManufacturerOption = "amaco",
 ) -> None:
     """Load stored snapshots into the catalog. No crawling — run `crawl` first.
 
@@ -274,29 +217,19 @@ def load(
     the whole corpus costs seconds, against ~50 minutes to re-crawl it.
     """
     settings = Settings()
-    adapter = AmacoAdapter()
+    adapter = adapter_for(manufacturer)
 
     async def run() -> None:
         with db_connect(settings.database_url) as conn:
             normalizer = Normalizer(load_vocabularies(conn))
             loader = Loader(conn, normalizer)
-            namer = _color_namer(conn)
+            namer = load_color_namer(conn)
 
-            query = """
-                select distinct on (url) url, fetched_at, http_status, etag, content_hash, body
-                from raw_snapshots
-                {where}
-                order by url, fetched_at desc
-            """
-            if slug:
-                patterns = [f"https://shop.amaco.com/{s.strip('/')}/" for s in slug]
-                rows = conn.execute(
-                    query.format(where="where url = any(%s)"), (patterns,)
-                ).fetchall()
-            else:
-                rows = conn.execute(query.format(where="")).fetchall()
+            # Must byte-match what the Fetcher stored, so build URLs via the adapter.
+            urls = [str(adapter.product_ref(s).url) for s in slug] if slug else None
+            snapshots = PostgresSnapshotStore(conn).newest_per_url(adapter.manufacturer, urls)
 
-            log.info("load.start", snapshots=len(rows), images=images)
+            log.info("load.start", snapshots=len(snapshots), images=images)
 
             async with httpx.AsyncClient(
                 timeout=settings.request_timeout_s,
@@ -305,7 +238,12 @@ def load(
                 already = stored_object_keys(conn, settings.bucket_for(adapter.manufacturer.value))
                 if already:
                     log.info("blobs.known", objects=len(already))
-                blobs = _blob_store(settings, blob_dir, adapter.manufacturer.value, already)
+                blobs = blob_store_for(
+                    settings,
+                    adapter.manufacturer.value,
+                    blob_dir=Path(blob_dir),
+                    known_keys=already,
+                )
                 # The local directory doubles as a byte cache even when blobs go to
                 # Supabase, so switching backends does not re-download the corpus.
                 media = (
@@ -313,15 +251,7 @@ def load(
                     if images
                     else None
                 )
-                for url, fetched_at, status, etag, digest, body in rows:
-                    snapshot = RawSnapshot(
-                        url=url,
-                        fetched_at=fetched_at,
-                        http_status=status,
-                        etag=etag,
-                        content_hash=digest,
-                        body=body,
-                    )
+                for snapshot in snapshots:
                     await ingest_product(snapshot, adapter, loader, media, namer)
 
             inherited = loader.inherit_line_cones()
@@ -346,6 +276,7 @@ def sync(
     limit: Annotated[int, typer.Option(help="Cap products. 0 = the whole catalog.")] = 0,
     images: Annotated[bool, typer.Option(help="Download and measure images.")] = True,
     blob_dir: Annotated[str, typer.Option(help="Local image cache.")] = "./.blobs",
+    manufacturer: ManufacturerOption = "amaco",
 ) -> None:
     """Crawl and ingest in one pass, touching only what changed. The command a cron runs.
 
@@ -357,18 +288,13 @@ def sync(
     scheduled path and the manual one cannot drift apart.
     """
     settings = Settings()
-    adapter = AmacoAdapter()
+    adapter = adapter_for(manufacturer)
 
     async def run() -> None:
         refs: list[ProductRef] = []
         if slug:
             # Targeted re-sync, e.g. after fixing the grammar for one product.
-            refs = [
-                ProductRef(
-                    url=f"https://shop.amaco.com/{s.strip('/')}/", external_id=s.strip("/")
-                )
-                for s in slug
-            ]
+            refs = [adapter.product_ref(s) for s in slug]
         else:
             async for ref in adapter.discover():
                 refs.append(ref)
@@ -381,9 +307,14 @@ def sync(
 
         with db_connect(settings.database_url) as conn:
             loader = Loader(conn, Normalizer(load_vocabularies(conn)))
-            namer = _color_namer(conn)
+            namer = load_color_namer(conn)
             already = stored_object_keys(conn, settings.bucket_for(adapter.manufacturer.value))
-            blobs = _blob_store(settings, blob_dir, adapter.manufacturer.value, already)
+            blobs = blob_store_for(
+                settings,
+                adapter.manufacturer.value,
+                blob_dir=Path(blob_dir),
+                known_keys=already,
+            )
 
             async with httpx.AsyncClient(
                 timeout=settings.request_timeout_s,
@@ -396,8 +327,9 @@ def sync(
                 fetcher = Fetcher(
                     client,
                     PostgresSnapshotStore(conn),
-                    ManufacturerKey.AMACO,
+                    adapter.manufacturer,
                     adapter.politeness,
+                    volatile_patterns=adapter.volatile_patterns,
                     retention=settings.snapshot_retention,
                     max_attempts=settings.max_attempts,
                 )

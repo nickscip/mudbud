@@ -2,10 +2,17 @@
 # Capture real AMACO pages as test fixtures. Honors the 10s Crawl-delay from
 # https://shop.amaco.com/robots.txt. Re-run only when the site structure changes;
 # the pure parsing stages are tested against these files, never the live site.
+#
+# Deliberately AMACO-only rather than parameterized: the category ?limit=100 pages
+# and xmlsitemap.php below are BigCommerce URL shapes, and the slug list is curated
+# to cover this grammar. A second source gets its own capture_<source>_fixtures.sh
+# with its own curated list, writing into tests/fixtures/<source>/.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tests/fixtures/amaco"
 mkdir -p "$DIR"
+# UA and DELAY duplicate AmacoAdapter's USER_AGENT and Politeness values — bash
+# cannot import Python, so keep them in step by hand.
 UA="mudbud-glaze-etl/0.1 (+https://github.com/nickscip/mudbud) contact: nscipione@blendlabsinc.com"
 DELAY=10
 

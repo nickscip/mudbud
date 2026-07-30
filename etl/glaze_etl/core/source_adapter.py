@@ -6,11 +6,13 @@ means one new subclass plus its grammar module — no stage, workflow, or table 
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from datetime import datetime
 
 from glaze_etl.core.models import (
+    CoatLevel,
     ImageFacts,
     ManufacturerKey,
     ParsedImage,
@@ -24,6 +26,17 @@ from glaze_etl.core.models import (
 class SourceAdapter(ABC):
     manufacturer: ManufacturerKey
     politeness: Politeness
+    coat_order: tuple[CoatLevel, ...] = ()
+    """Maps a split composite's region ordinal to a coat level. The composite layout is
+    source knowledge — AMACO's read thin-to-thick left to right. Empty means this source
+    never classifies an image as COATS_COMPOSITE, so nothing ever consults it."""
+
+    volatile_patterns: tuple[re.Pattern[str], ...] = ()
+    """Per-request noise this source injects into otherwise-identical responses, stripped
+    before content hashing. Which byte ranges are noise is a property of the site's stack
+    (BigCommerce analytics blobs, WordPress nonces), so each source measures its own.
+    Empty strips nothing — a source that forgets this looks byte-new on every pass, which
+    is loud, rather than silently borrowing another site's regexes."""
 
     @abstractmethod
     def discover(self, since: datetime | None = None) -> AsyncIterator[ProductRef]:
@@ -48,3 +61,31 @@ class SourceAdapter(ABC):
         Must not guess. An unresolved token lowers confidence and is reported; it never
         becomes a fact.
         """
+
+    @abstractmethod
+    def product_ref(self, slug: str) -> ProductRef:
+        """Build the canonical ProductRef for a slug someone typed at the CLI.
+
+        The URL template is source knowledge — AMACO is ``/{slug}/``, Mayco is
+        ``/product/{slug}/`` — and the result must byte-match what the Fetcher stored,
+        because targeted loads look snapshots up by URL.
+        """
+
+    @abstractmethod
+    def external_id_for(self, url: str) -> str:
+        """Derive the stable per-source key from a product URL.
+
+        The inverse of ``product_ref``. Kept on the adapter because the answer differs
+        per source path shape; two ad-hoc copies of this once disagreed about whether
+        the id is the whole path or its last segment.
+        """
+
+    def cone_range_for_category(self, category: str) -> tuple[str, str] | None:
+        """Map the source's cone-category label to a (from, to) pair of cone names.
+
+        The labels are the source's own vocabulary — AMACO's breadcrumb brackets,
+        Mayco's firing-temperature taxonomy — so the mapping lives here rather than in
+        the loader. Returning ``None`` leaves the line's range null, which matches
+        every cone query; the loader files the miss as an issue instead of guessing.
+        """
+        return None

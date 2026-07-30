@@ -17,7 +17,7 @@ graph TD
   end
 
   subgraph pg["Postgres / Supabase — supabase/"]
-    rpc["RPCs: search_glazes · glaze_by_code · glaze_appearances<br/>every lookup takes (manufacturer, code)"]
+    rpc["RPCs: search_glazes · glaze_by_code · glaze_appearances · similar_glazes<br/>every lookup takes (manufacturer, code)"]
     tables["glazes · glaze_images · appearances<br/>vocabularies · parse_issues"]
     bucket["private Storage bucket<br/>image derivatives, signed URLs"]
     rpc --> tables
@@ -28,11 +28,15 @@ graph TD
     activities["activities/crawl.py — retries, scheduling"]
     pipeline["core/pipeline.py — stage order"]
     adapter["core/source_adapter.py (ABC)"]
+    registry["sources/__init__.py — SOURCES, keyed by manufacturer"]
     amaco["sources/amaco/ — discovery · parser · filename grammar"]
     pure["core/ pure stages<br/>composite_splitter · color · color_namer · normalizer"]
     io["core/ I/O<br/>fetcher · media · blob_store · store · loader"]
     entry --> activities --> pipeline
+    entry --> registry
+    activities --> registry
     pipeline --> adapter
+    registry -. builds .-> amaco
     adapter -. implemented by .-> amaco
     pipeline --> pure
     pipeline --> io
