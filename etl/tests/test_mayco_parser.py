@@ -31,7 +31,12 @@ from glaze_etl.sources.mayco.adapter import (
     slug_from,
 )
 from glaze_etl.sources.mayco.filename_grammar import interpret_filename, normalize_sku
-from glaze_etl.sources.mayco.parser import _value_token, clean_text, parse_product
+from glaze_etl.sources.mayco.parser import (
+    _line,
+    _value_token,
+    clean_text,
+    parse_product,
+)
 from glaze_etl.sources.mayco.vocabulary import CATEGORY_CONE_RANGE, CONE_UNSTATED
 from tests.conftest import all_product_slugs, fixture_dir, raw_snapshot, snapshot_for
 
@@ -145,6 +150,47 @@ class TestLines:
         assert (product.code, product.line_code, product.cone_category) == ("CR-901", None, None)
 
 
+class TestNestedLines:
+    """The line must survive Mayco not listing a product's ancestors."""
+
+    @staticmethod
+    def _categories(*pairs: tuple[str, str]) -> list[dict[str, object]]:
+        return [{"slug": slug, "name": slug, "link": link} for slug, link in pairs]
+
+    def test_a_nested_product_resolves_to_its_parent_line(self) -> None:
+        """How all 630 resolve today: Mayco lists `ritual-glazes` alongside `bead`."""
+        assert _line(
+            self._categories(
+                ("bead", "https://www.maycocolors.com/product-category/color/fired/"
+                         "ritual-glazes/bead/"),
+                ("ritual-glazes", "https://www.maycocolors.com/product-category/color/fired/"
+                                  "ritual-glazes/"),
+            )
+        ) == ("ritual-glazes", "ritual-glazes")
+
+    def test_the_line_survives_the_parent_not_being_listed(self) -> None:
+        """The dependency this covers is invisible until it breaks: with only the deep
+        category listed, requiring a listed direct child returns no line — and therefore no
+        cone range either — for every nested product, with nothing logged."""
+        assert _line(
+            self._categories(
+                ("bead", "https://www.maycocolors.com/product-category/color/fired/"
+                         "ritual-glazes/bead/"),
+            )
+        ) == ("ritual-glazes", "ritual-glazes")
+
+    def test_a_category_outside_the_fired_branch_is_not_a_line(self) -> None:
+        assert (
+            _line(
+                self._categories(
+                    ("softees", "https://www.maycocolors.com/product-category/color/"
+                                "non-fired/softees/"),
+                )
+            )
+            is None
+        )
+
+
 class TestCones:
     def test_cone_category_is_the_line(self) -> None:
         """Cone lands on the line because that is where the schema keeps it: `upsert_line`
@@ -197,6 +243,44 @@ class TestPrices:
     def test_a_single_price_fills_both_ends(self) -> None:
         product = parse("sw214-micro-pearl")
         assert (product.price_min, product.price_max) == (16.00, 16.00)
+
+    def test_a_price_with_no_scale_refuses_to_guess(self) -> None:
+        """Defaulting the minor unit to 0 made the divisor 1, so "695" read as $695.00 —
+        the exact 100x error this class exists to prevent, and silent because a plausible
+        number renders fine. Defaulting to 2 would be a guess about the currency instead.
+        All 651 products send the field, so its absence means the response is not the shape
+        we think it is."""
+        body = json.dumps(
+            [
+                {
+                    "sku": "SW-998",
+                    "name": "No Scale",
+                    "permalink": "https://www.maycocolors.com/product/sw998-x/",
+                    "categories": [],
+                    "prices": {"price": "695"},
+                    "images": [{"src": "https://www.maycocolors.com/wp-content/x/sw-998.jpg"}],
+                }
+            ]
+        )
+        with pytest.raises(ValueError, match="currency_minor_unit"):
+            parse_product(_synthetic_snapshot(body))
+
+    def test_no_price_at_all_needs_no_scale(self) -> None:
+        """The refusal above must not reject a product that simply has no price: there is
+        nothing to divide, so nothing to get wrong."""
+        body = json.dumps(
+            [
+                {
+                    "sku": "SW-997",
+                    "name": "Unpriced",
+                    "permalink": "https://www.maycocolors.com/product/sw997-x/",
+                    "categories": [],
+                    "prices": {},
+                    "images": [{"src": "https://www.maycocolors.com/wp-content/x/sw-997.jpg"}],
+                }
+            ]
+        )
+        assert parse_product(_synthetic_snapshot(body)).price_min is None
 
     def test_an_unpriced_product_is_none_not_zero(self) -> None:
         """15 fired products carry `"0"`. "From $0.00" is a wrong answer where "no price"
@@ -561,6 +645,15 @@ class TestGrammar:
         `soda`, so it surfaces as unresolved instead of being dropped silently."""
         facts = interpret_filename("sw214_soda_web.jpg", "SW-214")
         assert "soda" in facts.unmatched_tokens
+
+    def test_a_filename_that_names_no_code_is_not_high_confidence(self) -> None:
+        """`subject_code` falls back to the product whose page the image was on, so a
+        filename of pure noise still gets one. Calling that HIGH would claim the filename
+        identified the glaze when it said nothing — and data_quality.sql trusts this field.
+        """
+        facts = interpret_filename("web_crop.jpg", "SW-214")
+        assert facts.subject_code == "SW-214"
+        assert facts.confidence is Confidence.MEDIUM
 
     def test_a_recognized_word_is_not_reported_as_unmatched(self) -> None:
         """`unmatched_tokens` means "a rule failed here". A word the grammar read correctly

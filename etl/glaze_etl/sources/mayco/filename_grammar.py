@@ -249,7 +249,7 @@ def interpret_filename(
         combination_codes=combination,
         cone=cone,
         form=form,
-        confidence=_confidence(subject, combination, unmatched),
+        confidence=_confidence(subject, codes, combination, unmatched),
         unmatched_tokens=unmatched,
         evidence=evidence,
     )
@@ -282,8 +282,22 @@ def _role(
 
 
 def _confidence(
-    subject: str | None, combination: tuple[str, ...], unmatched: tuple[str, ...]
+    subject: str | None,
+    codes: list[str],
+    combination: tuple[str, ...],
+    unmatched: tuple[str, ...],
 ) -> Confidence:
+    """How much of this image's meaning the filename actually stated.
+
+    `codes` is what makes the difference between HIGH and MEDIUM here, and it is not
+    redundant with `subject`: `subject` falls back to the product whose page the image was
+    found on, so a filename of pure noise — `web_crop.jpg` — still gets one. Reporting that
+    as HIGH would claim the filename identified the glaze when it said nothing at all, and
+    `data_quality.sql` trusts this field ("a high-confidence appearance must carry some
+    condition"). So HIGH requires the code to have been *read*, not inherited.
+    """
     if subject is None or combination:
         return Confidence.LOW
+    if not codes:
+        return Confidence.MEDIUM
     return Confidence.MEDIUM if unmatched else Confidence.HIGH

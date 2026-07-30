@@ -123,24 +123,38 @@ def extract_badges(attributes: list[dict[str, Any]]) -> GlazeBadges:
     return GlazeBadges(**fields, unknown_icons=tuple(sorted(set(unknown))))
 
 
-def _line(categories: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """The category that is a direct child of `color/fired/`, which is the glaze line.
+def _line(categories: list[dict[str, Any]]) -> tuple[str, str] | None:
+    """The `color/fired/` direct child a product belongs to — its glaze line, as (code, name).
 
-    Read off the `link` path rather than the flat slug list, because the array mixes depths:
-    Bead and Melt Gloop are children of Ritual Glazes, and both should resolve to the
-    Ritual Glazes line rather than becoming lines of nine products each.
+    The line is the direct child specifically, so that Bead and Melt Gloop resolve to their
+    parent Ritual Glazes rather than becoming lines of nine products each.
+
+    Two passes, and the second one matters. The first looks for a listed category that *is*
+    the direct child, which is how every one of the 630 products resolves today — Mayco lists
+    ancestors alongside descendants, so a Bead product carries `ritual-glazes` inline. The
+    second derives the child from a deeper category's own link path when no such category is
+    listed. Without it this function silently depends on Mayco continuing to include parents,
+    and the failure mode of that dependency is quiet: no line, and therefore no cone range
+    either, for every nested product.
+
+    The fallback can only recover the line's slug, not its display name, so the slug stands in
+    — a slightly ugly label beats a missing line.
 
     Deliberately not derived from the code prefix, which does not work: `SG` spans Designer
     Liner, Snow Gems and Cobblestone, and `SW` spans seven different lines.
     """
+    nested: str | None = None
     for category in categories:
         slug = str(category.get("slug") or "")
         if slug in LINE_IGNORED_CATEGORIES:
             continue
         match = _FIRED_CHILD_RE.search(str(category.get("link") or ""))
-        if match and match.group(1) == slug:
-            return category
-    return None
+        if match is None:
+            continue
+        if match.group(1) == slug:
+            return slug, clean_text(str(category.get("name") or slug))
+        nested = nested or match.group(1)
+    return (nested, nested) if nested else None
 
 
 def _price(prices: dict[str, Any]) -> tuple[float | None, float | None]:
@@ -153,8 +167,16 @@ def _price(prices: dict[str, Any]) -> tuple[float | None, float | None]:
     the real spread; the flat `price` is the cheapest of them. A zero becomes ``None``
     rather than 0.0: 15 products are unpriced, and "From $0.00" is a wrong answer where
     "no price" is the true one.
+
+    A missing ``currency_minor_unit`` **raises** rather than defaulting. Defaulting to 0 was
+    the bug this docstring already warned about: it makes the divisor 1, so `"695"` reads as
+    $695.00 and every price in the catalog is 100x too high — silently, since a plausible
+    number renders fine. Defaulting to 2 instead would be a guess about the currency. All 651
+    products send the field, so its absence means the response is not the shape we think, and
+    the parse should fail the way a missing `sku` does. A product with no price at all never
+    reaches this line, because there is nothing to divide.
     """
-    unit = 10 ** int(prices.get("currency_minor_unit") or 0)
+    raw_unit = prices.get("currency_minor_unit")
 
     def amount(raw: object) -> float | None:
         if raw in (None, ""):
@@ -163,7 +185,13 @@ def _price(prices: dict[str, Any]) -> tuple[float | None, float | None]:
             value = int(str(raw))
         except ValueError:
             return None
-        return value / unit if value else None
+        if not value:
+            return None
+        if raw_unit is None:
+            raise ValueError(
+                f"price {raw!r} with no currency_minor_unit — refusing to guess the scale"
+            )
+        return float(value) / float(10 ** int(raw_unit))
 
     if isinstance(span := prices.get("price_range"), dict):
         low, high = amount(span.get("min_amount")), amount(span.get("max_amount"))
@@ -213,8 +241,7 @@ def parse_product(snap: RawSnapshot) -> ParsedProduct:
         # think it is — louder is better than inventing a code from the slug.
         raise ValueError(f"Store API product {name or snap.url!r} carries no sku")
 
-    line = _line(list(product.get("categories") or []))
-    line_code = str(line["slug"]) if line else None
+    line_code, line_name = _line(list(product.get("categories") or [])) or (None, None)
     cone_category = line_code if line_code and line_code not in CONE_UNSTATED else None
 
     description = clean_text(str(product.get("short_description") or "")) or clean_text(
@@ -234,7 +261,7 @@ def parse_product(snap: RawSnapshot) -> ParsedProduct:
         code=normalize_sku(sku),
         name=name or normalize_sku(sku),
         line_code=line_code,
-        line_name=clean_text(str(line["name"])) if line else None,
+        line_name=line_name,
         cone_category=cone_category,
         breadcrumb=tuple(
             clean_text(str(c.get("name") or "")) for c in (product.get("categories") or [])
