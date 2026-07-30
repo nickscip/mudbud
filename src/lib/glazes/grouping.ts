@@ -23,15 +23,16 @@ export const glazeRef = (glaze: GlazeHit): GlazeRef => ({
 });
 
 /**
- * A brand name the header can print.
+ * Who to credit for a photograph the manufacturer published.
  *
- * Interim until F10: the RPCs return `manufacturer_key` but no display name, so the key is
- * all there is to show. Uppercasing happens to spell AMACO correctly; when a manufacturer
- * whose name is not an acronym lands, fix this by adding the display name to `glaze_hit`
- * rather than by teaching this function to spell.
+ * A fallback rather than the usual case, and it fires almost always: `glaze_images.credit`
+ * exists but no adapter sets it — AMACO burns the photographer's name into the image itself,
+ * and Mayco publishes none. So this is what the viewer actually shows, which is why it takes
+ * the brand as an argument instead of assuming one. It used to read "Photograph © AMACO"
+ * regardless of brand.
  */
-export function manufacturerLabel(key: string): string {
-  return key.toUpperCase();
+export function photographCredit(manufacturerName: string): string {
+  return `Photograph © ${manufacturerName}`;
 }
 
 /**

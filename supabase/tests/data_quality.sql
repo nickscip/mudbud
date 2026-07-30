@@ -7,12 +7,38 @@
 -- something implausible from real pages.
 
 do $$
-declare n int; total int; splitter_gap int;
+declare n int; total int; splitter_gap int; brand record;
 begin
   select count(*) into total from glazes;
   if total < 300 then
     raise exception 'only % glazes loaded; expected ~352 from the sitemap', total;
   end if;
+
+  -- Per-brand floors, because the total above stopped being able to detect a broken source the
+  -- moment there were two. AMACO's 352 clear 300 on their own, so Mayco could parse to nothing —
+  -- a changed API shape, a category id that moved — and every assertion in this file would still
+  -- pass. A floor per manufacturer is the only version of this check that fails when one source
+  -- fails.
+  --
+  -- Deliberately loose (roughly half of what each source should yield) rather than exact: a
+  -- manufacturer legitimately adds and discontinues products, and this file should fail on a
+  -- pipeline break, not on a catalogue decision. AMACO's sitemap yields ~352 glazes and Mayco's
+  -- `color/fired` category 630 after kits are excluded.
+  --
+  -- A brand with *no* rows at all is not flagged here. That is what a manufacturer added by
+  -- migration but not yet crawled looks like, and it is a legitimate intermediate state — the
+  -- floors below only judge a source that has started producing.
+  for brand in
+    select m.key, count(*) as loaded, case m.key when 'amaco' then 300 when 'mayco' then 400 end
+             as floor
+    from glazes g join manufacturers m on m.id = g.manufacturer_id
+    group by m.key
+  loop
+    if brand.floor is not null and brand.loaded < brand.floor then
+      raise exception 'only % % glazes loaded; expected at least %',
+        brand.loaded, brand.key, brand.floor;
+    end if;
+  end loop;
 
   -- Every glaze must have at least one photographed appearance, or the detail screen has
   -- nothing to show.
@@ -32,13 +58,25 @@ begin
   -- `coats_composite` is exempt while the splitter is unsolved: the filename was fully
   -- understood, so confidence is honestly high, but the thickness lives inside the pixels
   -- and is not extracted yet. Those rows are counted below rather than hidden.
+  --
+  -- The base glaze's own page is exempt for the same reason. A layering photograph appears on
+  -- both glazes' pages — `DL-23overDL-1` is on DL-23's *and* DL-1's — and
+  -- `layered_over_glaze_id` can only express the pair from the top glaze's side. On DL-1's
+  -- page the filename resolved completely, so `high` is honest, and the fact it states is
+  -- "something else was on top of me", which no column holds. The row is identified by its
+  -- own evidence naming it as the base, rather than by role alone: an unresolved
+  -- `layered_over_code` that *should* have resolved is a real failure and must stay visible.
   select count(*) into n
-  from appearances a join glaze_images i on i.id = a.image_id
+  from appearances a
+  join glaze_images i on i.id = a.image_id
+  join glazes g on g.id = a.glaze_id
   where a.confidence = 'high'
     and i.role not in ('label_chip', 'coats_composite')
     and a.cone_id is null and a.coat_level_id is null
     and a.clay_body_id is null and a.form_id is null
-    and a.layered_over_glaze_id is null;
+    and a.layered_over_glaze_id is null
+    and a.evidence->>'layered_over_code' is distinct from g.code
+    and not (a.evidence ? 'layered_under');
   if n > 0 then
     raise exception '% high-confidence appearances carry no condition at all', n;
   end if;

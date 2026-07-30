@@ -204,7 +204,7 @@ join glaze_images i on i.glaze_id = g.id
 where m.key = 'testco';
 
 do $$
-declare n int; mk text; amaco_id bigint; testco_id bigint;
+declare n int; mk text; t text; u text; amaco_id bigint; testco_id bigint;
 begin
   -- glaze_by_code must answer for the brand asked about, not for whichever row it reached
   -- first. Its `limit 1` made the wrong answer look like a confident one.
@@ -257,6 +257,28 @@ begin
     null,
     p_manufacturer := array[(select id from manufacturers where key='testco')]::smallint[]);
   if n <> 1 then raise exception 'manufacturer facet returned % rows, expected 1', n; end if;
+
+  -- The display name is joined per row, not constant (F10). Two brands is the only condition
+  -- that can tell those apart, which is why this sits with the collision fixture: a hardcoded
+  -- name or one taken from the first row would pass every single-brand assertion above.
+  select manufacturer_name, manufacturer_site_url into t, u
+    from glaze_by_code('PC-20', 'testco');
+  if t <> 'Test Co' or u <> 'https://example.test' then
+    raise exception 'glaze_by_code returned brand identity (%, %) for testco', t, u;
+  end if;
+
+  select manufacturer_name into t from glaze_by_code('PC-20', 'amaco');
+  if t <> 'AMACO (American Art Clay Co.)' then
+    raise exception 'glaze_by_code returned % as AMACO''s display name', t;
+  end if;
+
+  select manufacturer_name into t
+    from search_glazes(
+      null,
+      p_manufacturer := array[(select id from manufacturers where key='testco')]::smallint[]);
+  if t <> 'Test Co' then
+    raise exception 'search_glazes returned % as testco''s display name', t;
+  end if;
 
   raise notice 'manufacturer-scoped identity: all assertions passed';
 end $$;

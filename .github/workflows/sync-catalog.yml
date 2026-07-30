@@ -1,19 +1,21 @@
 name: Sync glaze catalog
 
-# Crawls the manufacturer's catalog and ingests only what changed.
+# Crawls every manufacturer's catalog and ingests only what changed.
 #
 # Chosen over a workflow engine deliberately: the workload is one serial pass a week whose
 # concurrency is capped at 1 by the source's own 10s crawl-delay, and it is already idempotent
 # and cheap to restart. Temporal Cloud starts at $100/mo and self-hosting means running a server
 # plus its database — neither earns its keep for a weekly cron, so the Temporal workflows this
 # once ran under were deleted rather than kept warm. The two shapes that were meant to bring
-# them back are both native here: several manufacturers in parallel is a `strategy.matrix` of
-# independent jobs (each source has its own crawl delay, so there is nothing to orchestrate
-# between them), and a review gate is `environment:` with required reviewers, as
-# deploy-schema.yml already uses. Durability lives in `raw_snapshots`, not in run state.
+# them back are both native here, and both are now in use: several manufacturers in parallel is the
+# `strategy.matrix` below (each source has its own crawl delay, so there is nothing to orchestrate
+# between them), and the review gate is `environment:`, which production carries a required
+# reviewer on. Durability lives in `raw_snapshots`, not in run state.
 #
-# Budget: ~60 minutes a run, almost entirely the mandated delay. Private repos get 2,000 free
-# Actions minutes a month, so a weekly run uses roughly 14%.
+# Budget: AMACO is ~60 minutes and Mayco ~105 (630 glaze products at a self-imposed 10s), almost
+# entirely delay. The two run as parallel matrix legs, so wall-clock is the slower one rather than
+# the sum — but Actions bills by job-minute, so a weekly run costs ~165 of the 2,000 free minutes a
+# private repo gets, roughly 8%.
 
 on:
   schedule:
@@ -30,18 +32,69 @@ on:
         type: boolean
         required: false
         default: true
+      manufacturer:
+        description: "Which source to crawl"
+        type: choice
+        options: [all, amaco, mayco]
+        required: false
+        default: all
+      environment:
+        description: "Which project to load"
+        type: choice
+        options: [staging, production]
+        required: false
+        default: staging
 
-# Two crawls at once would breach the crawl-delay the source asked for, so a run in progress is
-# never cancelled and a new one waits its turn.
+# Two runs at once would breach the crawl-delay each source is owed, so a run in progress is never
+# cancelled and a new one waits its turn. This bounds *runs*, not the matrix legs inside one: those
+# hit different hosts, so they do not contend for anyone's delay budget.
 concurrency:
   group: sync-catalog
   cancel-in-progress: false
 
 jobs:
-  sync:
+  # Which sources this run covers, as JSON for the matrix below. A job rather than an inline
+  # expression because the conditional is three-way, and `fromJSON` of a nested ternary is
+  # unreadable — a workflow nobody can read is one nobody will change correctly.
+  plan:
     runs-on: ubuntu-latest
-    # A full pass is ~60 min of waiting; this leaves room for retries without risking the 6h cap.
+    timeout-minutes: 5
+    outputs:
+      sources: ${{ steps.pick.outputs.sources }}
+    steps:
+      - id: pick
+        # A scheduled run carries no inputs at all, so an empty value means every source.
+        run: |
+          case "${{ github.event.inputs.manufacturer }}" in
+            ""|all) sources='["amaco","mayco"]' ;;
+            *)      sources='["${{ github.event.inputs.manufacturer }}"]' ;;
+          esac
+          echo "sources=$sources" >> "$GITHUB_OUTPUT"
+          echo "crawling: $sources" >> "$GITHUB_STEP_SUMMARY"
+
+  sync:
+    needs: plan
+    runs-on: ubuntu-latest
+    # The credential comes from a GitHub environment, not from repo-level secrets, and that
+    # distinction was load-bearing: the first dispatch of this workflow died on
+    # `ProgrammingError: missing "=" after "..." in connection info string` because the
+    # repo-level SUPABASE_DB_URL is not a usable DSN, while the environment secret
+    # deploy-schema.yml has been using all along is. One vetted credential per project beats two
+    # copies that can disagree. Defaulted so the weekly cron, which passes no inputs, still runs.
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    # A full pass is ~60 min of waiting for AMACO and ~105 for Mayco; this leaves room for retries
+    # without risking the 6h cap.
     timeout-minutes: 180
+    strategy:
+      # One leg per source, exactly as the header above anticipated. They are genuinely
+      # independent: each adapter carries its own crawl delay so there is nothing to pace between
+      # them, and every write is scoped by manufacturer_id — `link_layering` included, which joins
+      # base to subject within one brand.
+      matrix:
+        manufacturer: ${{ fromJSON(needs.plan.outputs.sources) }}
+      # A failing source must not cancel the other. Half a catalog refreshed beats none, and the
+      # failure is visible either way.
+      fail-fast: false
     defaults:
       run:
         working-directory: etl
@@ -67,10 +120,52 @@ jobs:
         # fetched for products whose page actually changed, which in a steady week is close to
         # none — so caching 259MB every run would cost more than it saves.
         run: |
+          # `set -o pipefail` is not optional here. Without it the exit status of this pipeline
+          # is tee's, so the first dispatch of this workflow crashed on the very first product
+          # and still reported success — the one outcome a scheduled job must never produce.
+          set -o pipefail
           uv run glaze-etl sync \
+            --manufacturer "${{ matrix.manufacturer }}" \
             --limit "${{ github.event.inputs.limit || 0 }}" \
             ${{ github.event.inputs.images == 'false' && '--no-images' || '' }} \
             | tee sync.log
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # Per-leg name: two jobs uploading `sync-log` collide, and upload-artifact v4 errors on
+          # that rather than merging.
+          name: sync-log-${{ matrix.manufacturer }}
+          path: etl/sync.log
+          retention-days: 30
+
+  # Both steps below describe the *catalog*, not one source's pass, so they run once after every
+  # leg instead of inside the matrix — where each would have re-checked the whole corpus per
+  # source and reported the same numbers twice.
+  verify:
+    needs: [plan, sync]
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    # `always()` so a failed source still gets the corpus checked: a half-refreshed catalog is
+    # exactly the state worth asserting about.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: etl
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: etl/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --frozen
 
       - name: Data quality
         # A crawl can succeed and still produce a bad corpus: a changed page layout parses to
@@ -86,7 +181,12 @@ jobs:
         # with 50 products, and the first assertion here is "at least 300 glazes" — so running it
         # against a deliberate partial load would fail the run for doing exactly what was asked.
         # A scheduled run has no inputs at all, which is the case that matters.
-        if: always() && (github.event.inputs.limit == '' || github.event.inputs.limit == '0')
+        # Skipped for a capped run *and* for a single-source run. Both are deliberate partial
+        # loads, and the floors below judge the whole catalog: asserting them after refreshing
+        # one source would fail the run for doing exactly what was asked.
+        if: |
+          (github.event.inputs.limit == '' || github.event.inputs.limit == '0')
+          && (github.event.inputs.manufacturer == '' || github.event.inputs.manufacturer == 'all')
         working-directory: .
         env:
           DB_URL: ${{ secrets.SUPABASE_DB_URL }}
@@ -107,10 +207,3 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: uv run glaze-etl report >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sync-log
-          path: etl/sync.log
-          retention-days: 30

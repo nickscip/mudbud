@@ -72,7 +72,8 @@ want := 'id bigint, code text, name text, description text, line_code text, line
      || 'color_terms text[], food_safe boolean, ap_seal boolean, price_min numeric, '
      || 'availability text, product_url text, hero_source_url text, hero_storage_path text, '
      || 'hero_hex text, coat_levels_available smallint, layering_count integer, '
-     || 'clay_bodies_shown text[], tier text, rank real';
+     || 'clay_bodies_shown text[], tier text, rank real, manufacturer_name text, '
+     || 'manufacturer_site_url text';
 
 if got is distinct from want then
   raise exception E'glaze_hit changed shape. Update GlazeHit in src/lib/glazes/types.ts and the'

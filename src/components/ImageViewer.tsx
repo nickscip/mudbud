@@ -80,13 +80,18 @@ export function ImageViewer({ image, onClose }: Props) {
                   {image.caption}
                 </Txt>
               ) : null}
-              <Txt
-                variant="caption"
-                className="mt-1 text-center text-xs"
-                style={{ color: colors.stone[400] }}
-              >
-                {image.credit ?? "Photograph © AMACO"}
-              </Txt>
+              {/* Guarded like the caption above. The brand-specific fallback lives with the
+                  caller that knows the brand, so an unattributed image renders nothing here
+                  rather than an empty line with a margin. */}
+              {image.credit ? (
+                <Txt
+                  variant="caption"
+                  className="mt-1 text-center text-xs"
+                  style={{ color: colors.stone[400] }}
+                >
+                  {image.credit}
+                </Txt>
+              ) : null}
             </View>
           </>
         ) : null}

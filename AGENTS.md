@@ -13,6 +13,28 @@ that require a dev client (React Native Skia, for one) while the Expo Go loop ma
 bundle. It is excluded from Metro via `resolver.blockList`. The two halves share only
 the Postgres schema.
 
+**`etl/.env` points `SUPABASE_DB_URL` at the hosted project.** So a bare `glaze-etl sync`
+or `load` run on this machine writes to production, not to the local stack — the opposite
+of what "running it locally" sounds like. Override all three per command:
+
+```
+SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres \
+SUPABASE_URL=http://127.0.0.1:54321 \
+SUPABASE_SECRET_KEY=<local secret from `npx supabase status`> \
+  uv run glaze-etl sync --manufacturer mayco --limit 12
+```
+
+This was found the way these things are: a Mayco sync aimed at the local database went to
+the hosted one instead, and the only thing that stopped it was `SnapshotStore.insert`
+raising `LookupError` because the `mayco` manufacturers row had not been deployed there
+yet. A guard that happens to exist is not a guard.
+
+Two related notes while you are in there. `etl/.env` still carries `TEMPORAL_ADDRESS` and
+`TEMPORAL_NAMESPACE`, which nothing has read since the worker was deleted. And local
+`psql` may be a broken Homebrew link (`Symbol not found: _PQbackendPID`); the repo's
+scripts already route around it via `scripts/lib/find-psql.sh`, so use
+`PSQL="$(find_psql)"` rather than bare `psql`.
+
 # Prove a schema change before applying it anywhere
 
 ```

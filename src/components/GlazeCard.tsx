@@ -110,9 +110,19 @@ export function GlazeCard({ glaze, onPress, state, favorite }: Props) {
  * AMACO is inconsistent about zero-padding — the catalog code is `C-5` while the product
  * name reads "C-05 Charcoal" — so this matches the line prefix and any digits rather than
  * the code string, which would miss the padded form.
+ *
+ * Also matches an unseparated prefix (`SW214 Micro Pearl`), because Mayco writes its codes
+ * both ways and the catalog code is normalized to the dashed form either way. Mayco names
+ * mostly do not repeat the code at all, in which case nothing matches and the name is
+ * returned whole — the intended no-op.
+ *
+ * The prefix is escaped before it becomes a pattern. It is alphanumeric for both brands
+ * today, so this fixes nothing currently broken; it stops a code containing a regex
+ * metacharacter from throwing inside a list render, which is a bad place to find out.
  */
 export function stripCode(name: string, code: string): string {
   const [line] = code.split("-");
-  const trimmed = name.replace(new RegExp(`^${line}-0*\\d+\\s*`, "i"), "").trim();
+  const prefix = line.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const trimmed = name.replace(new RegExp(`^${prefix}-?0*\\d+\\s*`, "i"), "").trim();
   return trimmed || name;
 }

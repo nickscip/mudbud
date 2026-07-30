@@ -309,3 +309,46 @@ class TestCanonicalHashing:
         assert first.outcome is FetchOutcome.STORED
         assert second.outcome is FetchOutcome.UNCHANGED
         assert len(store.rows) == 1
+
+
+class TestMaycoIsQuiet:
+    """The other outcome of the same measurement, which is why it is asserted rather than
+    assumed.
+
+    `volatile_patterns` empty means one of two very different things: the source was
+    measured and injects nothing, or nobody looked. AMACO's case above proves the regexes
+    strip real noise; this proves Mayco needs none — two fetches of one product ten
+    seconds apart came back byte-for-byte identical. A JSON API has no analytics blob,
+    nonce or cache-buster to inject.
+
+    If Mayco ever starts churning, this fails and says so, instead of every weekly crawl
+    quietly re-storing all 630 products.
+    """
+
+    @staticmethod
+    def _bodies() -> tuple[str, str]:
+        from tests.conftest import fixture_dir
+
+        mayco = fixture_dir("mayco")
+        return (
+            (mayco / "volatile-sw-197-fossil-rock-fetch-a.json").read_text(),
+            (mayco / "volatile-sw-197-fossil-rock-fetch-b.json").read_text(),
+        )
+
+    def test_two_fetches_are_byte_identical(self) -> None:
+        a, b = self._bodies()
+        assert a == b
+
+    def test_the_empty_pattern_tuple_is_therefore_enough(self) -> None:
+        from glaze_etl.sources.mayco.adapter import MaycoAdapter
+
+        a, b = self._bodies()
+        assert MaycoAdapter.volatile_patterns == ()
+        assert content_hash(a, MaycoAdapter.volatile_patterns) == content_hash(
+            b, MaycoAdapter.volatile_patterns
+        )
+
+    def test_a_real_content_change_still_registers(self) -> None:
+        a, _ = self._bodies()
+        renamed = a.replace("Fossil Rock", "Fossil Renamed")
+        assert content_hash(a) != content_hash(renamed)
