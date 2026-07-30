@@ -19,7 +19,16 @@
  */
 export type GlazeRef = { manufacturer: string; code: string };
 
-/** A search hit. `tier` is what splits the results into "Matches" and "Similar". */
+/**
+ * A row of `glaze_hit`, the one composite every catalog RPC returns.
+ *
+ * `tier` and `rank` are the two fields whose meaning depends on which RPC produced the row, so
+ * they are only comparable within one call's results. `search_glazes` uses them as designed —
+ * tier splits "Matches" from "Similar", rank is a text-search score in roughly 0..1.
+ * `glaze_by_code` returns a single row with a flat `match`/`1.0`, and `similar_glazes` returns
+ * `match` for everything with rank as its raw similarity score, an integer that grows with the
+ * catalog. Sorting one list by rank is fine; comparing a rank across two of them is not.
+ */
 export type GlazeHit = {
   id: number;
   code: string;

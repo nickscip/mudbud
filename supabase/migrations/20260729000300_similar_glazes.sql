@@ -13,6 +13,14 @@
 --
 -- Same page-then-aggregate fence as 20260728000200: scoring touches only columns of
 -- `glazes`, and the vocabulary joins and appearance aggregate run over at most p_limit rows.
+--
+-- `glaze_hit.tier` and `.rank` carry something different here, which is worth saying out loud
+-- because the type does not. For search they mean "match vs near" and a text-search rank in
+-- roughly 0..1; here tier is the constant 'match' (there is no second tier to be in) and rank is
+-- the raw similarity score — an integer, three per shared colour term plus up to five, on no
+-- shared scale with the search rank.
+-- `glaze_by_code` already stretches the type the same way with a flat 1.0. Comparable within one
+-- RPC's results, never across two.
 
 create function similar_glazes(
   p_code         text,
@@ -36,6 +44,12 @@ language sql stable parallel safe as $$
                   intersect
                   select unnest(a.color_terms)
                 ) shared)
+           -- The `is not null` halves are documentation, not logic: `null = null` is null, which
+           -- a CASE already reads as not-true, so an unknown surface scores nothing either way.
+           -- They are kept because "two glazes we know nothing about are not similar" is the
+           -- invariant here and it is one an `is not distinct from` would quietly invert — on the
+           -- real catalog most glazes have no recorded surface. search_smoke.sql asserts the
+           -- invariant directly, so removing these cannot change an answer without failing.
            + case when g.surface_id is not null and g.surface_id = a.surface_id then 2 else 0 end
            + case when g.opacity_id is not null and g.opacity_id = a.opacity_id then 2 else 0 end
            + case when g.line_id    is not null and g.line_id    = a.line_id    then 1 else 0 end
@@ -43,11 +57,15 @@ language sql stable parallel safe as $$
     from glazes g, anchor a
     where g.id <> a.id
   ),
+  -- `s.id` is the last sort key rather than decoration. Not scoping to the anchor's brand is
+  -- the whole design, and two brands can ship the same code — the fixture already has two
+  -- PC-20s — so (score, code) is not a total order. At the LIMIT boundary an untotal order
+  -- decides *which* rows come back, not just how they are stacked.
   page as (
     select s.id, s.code, s.score
     from scored s
     where s.score > 0
-    order by s.score desc, s.code
+    order by s.score desc, s.code, s.id
     limit greatest(p_limit, 0)
   )
   select
@@ -93,7 +111,7 @@ language sql stable parallel safe as $$
     left join clay_bodies cb on cb.id = a.clay_body_id
     where a.glaze_id = g.id
   ) agg on true
-  order by p.score desc, p.code;
+  order by p.score desc, p.code, p.id;
 $$;
 
 -- New function, so this is its first grant — guarded because anon and authenticated exist

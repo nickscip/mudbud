@@ -33,6 +33,23 @@ lateral (values
 ) as v(code,name,slug,descr,cf,ct,terms)
 where m.key='amaco';
 
+-- Surface and opacity, set on two of the four on purpose. `similar_glazes` scores a shared surface
+-- and a shared opacity at 2 each, and with every glaze null on both — which is how this fixture
+-- started — neither term can ever fire, so both could be deleted from the migration and every
+-- assertion would still pass. PC-13 shares PC-20's surface and not its opacity, which separates
+-- the two terms rather than testing them as a pair; PC-30 and LG-99 stay null on both, which is
+-- what makes "two unknown surfaces are not a shared surface" provable. Nothing else in this file
+-- filters on either column, so the search assertions above are untouched.
+update glazes g
+set surface_id = (select id from surfaces  where key = v.surface),
+    opacity_id = (select id from opacities where key = v.opacity)
+from (values ('PC-20','gloss','translucent'),
+             ('PC-13','gloss','opaque')) as v(code, surface, opacity),
+     manufacturers m
+where m.key = 'amaco'
+  and g.manufacturer_id = m.id
+  and g.code = v.code;
+
 -- Appearances, so the LATERAL aggregate and the clay-body filter are actually exercised.
 -- Without these the hero image, coat count, layering count and clay list all come back
 -- null while every other assertion still passes.
@@ -161,6 +178,16 @@ from manufacturers m
 join glaze_lines l on l.manufacturer_id = m.id and l.code = 'PC'
 where m.key = 'testco';
 
+-- The one attribute testco's glaze shares with amaco's PC-20, and the only reason a cross-brand
+-- similar is reachable at all: no shared colour term, and its 'PC' line is testco's own row with
+-- its own id, so the line term cannot fire across brands either. Without this, every assertion
+-- below would show cross-brand results being *excluded* — and `similar_glazes` scoped to the
+-- anchor's manufacturer would pass the whole file, while breaking the feature's stated point.
+update glazes g
+set opacity_id = (select id from opacities where key = 'translucent')
+from manufacturers m
+where m.key = 'testco' and g.manufacturer_id = m.id and g.code = 'PC-20';
+
 insert into glaze_images (glaze_id, source_url, storage_path, sha256, role,
                           raw_filename, parse_confidence)
 select g.id, 'https://cdn.example.test/pc-20-chip.jpg', 'l/tt/pc-20.jpg',
@@ -234,34 +261,67 @@ begin
   raise notice 'manufacturer-scoped identity: all assertions passed';
 end $$;
 
--- similar_glazes. Fixture geometry the assertions lean on: the four amaco glazes share the PC
--- line, so every amaco pair scores at least 1; PC-13 also shares "green" with PC-20; testco's
--- PC-20 shares no terms and no line with amaco's, so it scores 0 and stays out.
+-- similar_glazes.
+--
+-- The fixture geometry every assertion below leans on, written out because the scores are only
+-- checkable against it:
+--
+--   anchor  amaco PC-20   gloss / translucent   PC line   teal blue celadon green
+--   amaco   PC-13         gloss / opaque        PC line   sage green      3+2+0+1 = 6
+--   testco  PC-20         —     / translucent   own line  ochre yellow    0+0+2+0 = 2
+--   amaco   LG-99         —     / —             PC line   brown           0+0+0+1 = 1
+--   amaco   PC-30         —     / —             PC line   tenmoku brown   0+0+0+1 = 1
+--
+-- Scores are asserted directly, on `rank`, rather than only as an ordering. An ordering test
+-- cannot tell a term that fires from a term that fires twice as hard as intended, and it cannot
+-- see a term that never fires at all as long as some other term already put the row in front.
 do $$
-declare n int; c text; mk text; hero text;
+declare n int; c text; mk text; hero text; r real;
 begin
-  -- Colour overlap outranks line-only similarity.
-  select code, manufacturer_key, hero_source_url into c, mk, hero
+  -- Colour overlap outranks everything, and the whole score is checked: 3 for the shared
+  -- "green", 2 for the shared gloss surface, 1 for the shared line. If any of the three stopped
+  -- contributing, PC-13 would still sort first — only the number says so.
+  select code, manufacturer_key, hero_source_url, rank into c, mk, hero, r
   from similar_glazes('PC-20', 'amaco') limit 1;
-  if c is distinct from 'PC-13' then
-    raise exception 'expected PC-13 as closest to PC-20, got %', c;
+  if (c, mk) is distinct from ('PC-13', 'amaco') then
+    raise exception 'expected amaco/PC-13 as closest to PC-20, got %/%', mk, c;
+  end if;
+  if r is distinct from 6::real then
+    raise exception 'PC-13 scored % against PC-20, expected 6 (colour 3 + surface 2 + line 1)', r;
   end if;
   if hero is null then raise exception 'similar_glazes did not aggregate the hero image'; end if;
 
-  -- Zero-scored glazes stay out: testco's PC-20 shares nothing with amaco's.
-  select count(*) into n from similar_glazes('PC-20', 'amaco');
-  if n <> 3 then raise exception 'similar_glazes(PC-20, amaco) returned % rows, expected 3', n; end if;
+  -- Cross-brand similars are the feature's stated point and the reason results are not scoped to
+  -- the anchor's manufacturer. Nothing else here would notice that scoping being added: every
+  -- other cross-brand pair scores 0 and is excluded on merit. testco's PC-20 shares only the
+  -- anchor's opacity, so its presence proves the opacity term fires *and* that a second brand can
+  -- reach the list at all.
+  select rank into r from similar_glazes('PC-20', 'amaco')
+  where code = 'PC-20' and manufacturer_key = 'testco';
+  if r is distinct from 2::real then
+    raise exception 'expected testco PC-20 at 2 (shared opacity), got %',
+      coalesce(r::text, '<absent — is the query scoped to one brand?>');
+  end if;
 
-  -- The anchor is never its own similar.
+  -- Four scoring rows, no zero-scored ones. LG-99 and PC-30 are here on the shared line alone.
+  select count(*) into n from similar_glazes('PC-20', 'amaco');
+  if n <> 4 then raise exception 'similar_glazes(PC-20, amaco) returned % rows, expected 4', n; end if;
+
+  -- The anchor is never its own similar — and it is excluded by identity, not by code, which is
+  -- exactly what the testco row above makes testable.
   select count(*) into n from similar_glazes('PC-20', 'amaco')
   where code = 'PC-20' and manufacturer_key = 'amaco';
   if n <> 0 then raise exception 'similar_glazes returned the anchor itself'; end if;
 
-  -- The anchor is resolved by (manufacturer, code): the other brand's PC-20 is a different
-  -- glaze with a different answer — here, no overlap with anything.
+  -- The anchor is resolved by (manufacturer, code): the other brand's PC-20 is a different glaze
+  -- with a different answer. Symmetric to the assertion above, from the other side.
   select count(*) into n from similar_glazes('PC-20', 'testco');
-  if n <> 0 then
-    raise exception 'similar_glazes(PC-20, testco) returned % rows for a disjoint glaze', n;
+  if n <> 1 then
+    raise exception 'similar_glazes(PC-20, testco) returned % rows, expected 1', n;
+  end if;
+  select code, manufacturer_key into c, mk from similar_glazes('PC-20', 'testco');
+  if (c, mk) is distinct from ('PC-20', 'amaco') then
+    raise exception 'testco PC-20''s similar was %/%, expected amaco/PC-20', mk, c;
   end if;
 
   -- An unknown pair is a miss, never the closest hit.
@@ -269,9 +329,22 @@ begin
   if n <> 0 then raise exception 'similar_glazes answered for an unknown manufacturer'; end if;
 
   -- A different anchor reorders: LG-99 and PC-30 meet on "brown".
-  select code into c from similar_glazes('LG-99', 'amaco') limit 1;
+  select code, rank into c, r from similar_glazes('LG-99', 'amaco') limit 1;
   if c is distinct from 'PC-30' then
     raise exception 'expected PC-30 as closest to LG-99, got %', c;
+  end if;
+
+  -- Two unknown surfaces are not a shared surface, and the same for opacity. LG-99 and PC-30 are
+  -- both null on both columns, so this pins the invariant rather than the construct that happens
+  -- to enforce it: today it is SQL's own null semantics (`null = null` is null, which a CASE reads
+  -- as not-true), which makes the `is not null` guards in the migration documentation rather than
+  -- logic. The assertion is what stops that from changing silently — a rewrite reaching for
+  -- `is not distinct from` would make every glaze of unknown surface similar to every other one,
+  -- and on the real catalog that is most of them. 4 is colour 3 plus line 1; 8 would be two
+  -- unknowns counted twice as matches.
+  if r is distinct from 4::real then
+    raise exception 'PC-30 scored % against LG-99, expected 4 (colour 3 + line 1); '
+      '8 means two null surfaces and two null opacities were scored as shared', r;
   end if;
 
   select count(*) into n from similar_glazes('PC-20', 'amaco', 1);

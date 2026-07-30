@@ -96,6 +96,7 @@ export function useGlazeDetail(ref: GlazeRef | undefined) {
     let cancelled = false;
     (async () => {
       setLoading(true);
+      setError(null);
       try {
         const [hit, rows] = await Promise.all([
           fetchGlaze(target),
@@ -124,11 +125,20 @@ export function useGlazeDetail(ref: GlazeRef | undefined) {
 }
 
 /**
- * The "more like this" list for one glaze. Fetched by the tab that shows it rather than with
- * the detail pair, so opening a glaze page costs two calls, not three — the tab mounts only
- * when chosen, and this hook mounts with it.
+ * The "more like this" list for one glaze.
+ *
+ * `enabled` is how the screen says "the reader has asked for this tab" — same lever as
+ * `useGlazeSearch`, and here it buys the same thing twice. Opening a glaze page costs two calls
+ * rather than three, because nothing is requested until the tab is chosen; and returning to the
+ * tab costs nothing, because the hook lives above the tab it feeds instead of mounting with it.
+ * The caller is expected to latch `enabled` on rather than track the visible tab, since a glaze's
+ * similars cannot change while the page is open and re-asking for them would be a request spent
+ * on an answer already held.
  */
-export function useSimilarGlazes(ref: GlazeRef | undefined) {
+export function useSimilarGlazes(
+  ref: GlazeRef | undefined,
+  { enabled = true }: { enabled?: boolean } = {}
+) {
   const [similars, setSimilars] = useState<GlazeHit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -137,10 +147,11 @@ export function useSimilarGlazes(ref: GlazeRef | undefined) {
   const code = ref?.code;
 
   useEffect(() => {
-    if (!manufacturer || !code) return;
+    if (!enabled || !manufacturer || !code) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
+      setError(null);
       try {
         const rows = await fetchSimilarGlazes({ manufacturer, code });
         if (!cancelled) setSimilars(rows);
@@ -155,7 +166,7 @@ export function useSimilarGlazes(ref: GlazeRef | undefined) {
     return () => {
       cancelled = true;
     };
-  }, [manufacturer, code]);
+  }, [manufacturer, code, enabled]);
 
   return { similars, loading, error };
 }

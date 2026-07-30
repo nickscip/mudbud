@@ -60,6 +60,12 @@ export default function GlazeDetailScreen() {
   const [viewing, setViewing] = useState<ViewerImage | null>(null);
   const [tab, setTab] = useState<DetailTab>("application");
 
+  // Latched rather than `tab === "similar"`: a glaze's similars cannot change while the page is
+  // open, so once the reader has asked for them, leaving the tab and coming back should cost
+  // nothing. Off until then, which is what keeps opening a glaze at two requests instead of three.
+  const [similarAsked, setSimilarAsked] = useState(false);
+  const similar = useSimilarGlazes(ref, { enabled: similarAsked });
+
   // Marks live in local SQLite, so they resolve instantly and work with no signal.
   const { data: mark } = useLiveQuery(glazeMarkQuery(ref));
 
@@ -183,7 +189,14 @@ export default function GlazeDetailScreen() {
           ) : null}
 
           <View className="mt-6">
-            <SegmentedTabs tabs={DETAIL_TABS} active={tab} onChange={setTab} />
+            <SegmentedTabs
+              tabs={DETAIL_TABS}
+              active={tab}
+              onChange={(next) => {
+                setTab(next);
+                if (next === "similar") setSimilarAsked(true);
+              }}
+            />
           </View>
         </View>
 
@@ -192,7 +205,7 @@ export default function GlazeDetailScreen() {
         ) : null}
         {tab === "combos" ? <CombosTab grouped={grouped} onEnlarge={setViewing} /> : null}
         {tab === "photos" ? <PhotosTab grouped={grouped} onEnlarge={setViewing} /> : null}
-        {tab === "similar" ? <SimilarTab glazeRef={ref} /> : null}
+        {tab === "similar" ? <SimilarTab {...similar} /> : null}
 
         <ImageViewer image={viewing} onClose={() => setViewing(null)} />
 
@@ -308,14 +321,19 @@ function CombosTab({ grouped, onEnlarge }: TabProps) {
   );
 }
 
+type SimilarTabProps = ReturnType<typeof useSimilarGlazes>;
+
 /**
  * Glazes that look like this one, each card a way out of a glaze that is not quite right.
- * Named `glazeRef` because `ref` is a reserved prop. Marks are deliberately not shown here:
- * this list answers "what else looks like this", not "what do I own".
+ * Marks are deliberately not shown here: this list answers "what else looks like this", not
+ * "what do I own".
+ *
+ * Takes the fetch result rather than the ref, because this component unmounts every time the
+ * reader leaves the tab and a hook inside it would re-ask the server on every return. The screen
+ * owns the request; this owns the rendering of it.
  */
-function SimilarTab({ glazeRef }: { glazeRef: GlazeRef }) {
+function SimilarTab({ similars, loading, error }: SimilarTabProps) {
   const router = useRouter();
-  const { similars, loading, error } = useSimilarGlazes(glazeRef);
 
   if (loading) {
     return (
