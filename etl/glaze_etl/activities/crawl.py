@@ -24,7 +24,7 @@ from glaze_etl.core.db import connect as db_connect
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import MediaProcessor
-from glaze_etl.core.models import ProductRef, RawSnapshot
+from glaze_etl.core.models import ProductRef
 from glaze_etl.core.normalizer import Normalizer, load_vocabularies
 from glaze_etl.core.pipeline import ingest_product
 from glaze_etl.core.store import PostgresSnapshotStore
@@ -132,25 +132,11 @@ async def ingest_snapshot(payload: IngestInput) -> IngestOutput:
     adapter = adapter_for(payload.manufacturer)
 
     with db_connect(settings.database_url) as conn:
-        row = conn.execute(
-            """
-            select url, fetched_at, http_status, etag, content_hash, body
-            from raw_snapshots where url = %s
-            order by fetched_at desc limit 1
-            """,
-            (payload.url,),
-        ).fetchone()
-        if row is None:
-            raise ValueError(f"no snapshot stored for {payload.url}")
-
-        snapshot = RawSnapshot(
-            url=row[0],
-            fetched_at=row[1],
-            http_status=row[2],
-            etag=row[3],
-            content_hash=row[4],
-            body=row[5],
-        )
+        snapshot = PostgresSnapshotStore(conn).newest(payload.url, adapter.manufacturer)
+        if snapshot is None:
+            raise ValueError(
+                f"no snapshot stored for {payload.url} under {adapter.manufacturer.value}"
+            )
 
         loader = Loader(conn, Normalizer(load_vocabularies(conn)))
         namer = _color_namer(conn)
