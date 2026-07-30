@@ -50,22 +50,40 @@ export default function GlazeSearchScreen() {
     () => new Map((marks ?? []).map((m) => [markKey(m), m])),
     [marks]
   );
+  // Sent to the server rather than applied to the page we already have, so a marked glaze ranked
+  // below the limit still shows up under its own filter. Brand travels with the code, or the
+  // filter would surface another manufacturer's glaze of the same name.
+  //
+  // Keyed on which glazes are marked, not on the array holding them: every mark write hands this
+  // screen a new `marks` identity, and since C4 the note autosave writes on every typing pause —
+  // from the detail screen, which leaves this one mounted underneath. Depending on the array
+  // re-ran the entire search each time, with no filter active and nothing on screen changing.
+  const markRefsKey = markFilter
+    ? (marks ?? [])
+        .filter(MARK_FILTERS[markFilter].match)
+        .map(markKey)
+        .join("|")
+    : "";
+  const markRefs = useMemo(
+    () =>
+      markFilter
+        ? (marks ?? [])
+            .filter(MARK_FILTERS[markFilter].match)
+            .map((m) => ({ manufacturer: m.manufacturer, code: m.code }))
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- markRefsKey is the content of marks
+    [markFilter, markRefsKey]
+  );
+
   const filters = useMemo<GlazeFilters>(() => {
     const preset = conePreset === null ? null : CONE_PRESETS[conePreset];
     return {
       coneFrom: preset?.from,
       coneTo: preset?.to,
       foodSafeOnly,
-      // Sent to the server rather than applied to the page we already have, so a marked glaze
-      // ranked below the limit still shows up under its own filter. Brand travels with the
-      // code, or the filter would surface another manufacturer's glaze of the same name.
-      marks: markFilter
-        ? (marks ?? [])
-            .filter(MARK_FILTERS[markFilter].match)
-            .map((m) => ({ manufacturer: m.manufacturer, code: m.code }))
-        : undefined,
+      marks: markRefs,
     };
-  }, [conePreset, foodSafeOnly, markFilter, marks]);
+  }, [conePreset, foodSafeOnly, markRefs]);
 
   // A mark filter with nothing marked must show nothing, so there is no query to make.
   const nothingMarked = markFilter !== null && (filters.marks?.length ?? 0) === 0;

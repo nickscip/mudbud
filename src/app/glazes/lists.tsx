@@ -45,11 +45,17 @@ export default function GlazeListsScreen() {
     [marks, tab]
   );
 
+  // Keyed on which glazes are in the segment, not on the array holding them. Any mark write
+  // gives `marks` — and so `segmentMarks` — a fresh identity even when membership is unchanged,
+  // and C4's note autosave means that now happens on every typing pause. Depending on the array
+  // would re-ask the catalog a question it just answered, from a screen the reader has left.
+  const segmentKey = segmentMarks.map(markKey).join("|");
   const filters = useMemo<GlazeFilters>(
     () => ({
       marks: segmentMarks.map((m) => ({ manufacturer: m.manufacturer, code: m.code })),
     }),
-    [segmentMarks]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- segmentKey is segmentMarks' content
+    [segmentKey]
   );
 
   const { results, loading, error, retry } = useGlazeSearch("", filters, {
