@@ -48,3 +48,13 @@ class SourceAdapter(ABC):
         Must not guess. An unresolved token lowers confidence and is reported; it never
         becomes a fact.
         """
+
+    def cone_range_for_category(self, category: str) -> tuple[str, str] | None:
+        """Map the source's cone-category label to a (from, to) pair of cone names.
+
+        The labels are the source's own vocabulary — AMACO's breadcrumb brackets,
+        Mayco's firing-temperature taxonomy — so the mapping lives here rather than in
+        the loader. Returning ``None`` leaves the line's range null, which matches
+        every cone query; the loader files the miss as an issue instead of guessing.
+        """
+        return None

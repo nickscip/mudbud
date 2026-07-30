@@ -51,7 +51,12 @@ async def ingest_product(
     bandwidth — useful when iterating on the grammar, where the HTML is all that matters.
     """
     product = adapter.parse(snapshot)
-    line_id = loader.upsert_line(product)
+    cone_range = (
+        adapter.cone_range_for_category(product.cone_category)
+        if product.cone_category
+        else None
+    )
+    line_id = loader.upsert_line(product, cone_range)
     glaze_id = loader.upsert_glaze(product, line_id)
 
     _report_unknown_badges(loader, product)

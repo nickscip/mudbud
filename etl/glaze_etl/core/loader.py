@@ -22,7 +22,6 @@ from glaze_etl.core.appearance_writer import AppearanceWriter
 from glaze_etl.core.models import ParsedProduct
 from glaze_etl.core.normalizer import Normalizer
 from glaze_etl.core.payloads import ImagePayload, RegionPayload
-from glaze_etl.sources.amaco.vocabulary import CATEGORY_CONE_RANGE
 
 log = structlog.get_logger(__name__)
 
@@ -54,11 +53,14 @@ class Loader:
         self.stats = LoadStats()
 
     # ------------------------------------------------------------------ lines
-    def upsert_line(self, product: ParsedProduct) -> int | None:
+    def upsert_line(
+        self, product: ParsedProduct, cone_range: tuple[str, str] | None
+    ) -> int | None:
+        """``cone_range`` comes from the adapter's `cone_range_for_category` — the
+        category labels are source vocabulary, so the mapping cannot live here."""
         if not product.line_code:
             return None
 
-        cone_range = CATEGORY_CONE_RANGE.get(product.cone_category or "")
         if cone_range is None and product.cone_category:
             # Better to leave the range null and say so than to guess endpoints. A null
             # range matches every cone query, so the glaze stays findable meanwhile.

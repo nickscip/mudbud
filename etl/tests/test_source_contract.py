@@ -1,0 +1,36 @@
+"""Invariants every source adapter must hold, plus the seam itself.
+
+`core/` must never import from `sources/` — that import direction is exactly how the
+loader ended up hardcoding AMACO's cone-category vocabulary (roadmap F1). The tripwire
+here is a text scan rather than an import graph so it catches lazy imports too.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from glaze_etl.sources.amaco.adapter import AmacoAdapter
+
+CORE = Path(__file__).parent.parent / "glaze_etl" / "core"
+
+
+def test_core_never_imports_sources() -> None:
+    offenders = [
+        f"{path.name}:{lineno}"
+        for path in sorted(CORE.glob("*.py"))
+        for lineno, line in enumerate(path.read_text().splitlines(), start=1)
+        if "glaze_etl.sources" in line
+    ]
+    assert not offenders, f"core/ reaches into sources/: {offenders}"
+
+
+class TestAmacoConeCategories:
+    def test_known_brackets_map(self) -> None:
+        adapter = AmacoAdapter()
+        assert adapter.cone_range_for_category("Mid-High Fire Glazes") == ("5", "6")
+        assert adapter.cone_range_for_category("Low Fire Glazes") == ("05", "05")
+
+    def test_unknown_category_returns_none(self) -> None:
+        # None leaves the line's cone range null — findable by every cone query —
+        # and the loader files an `unmapped_cone_category` issue instead of guessing.
+        assert AmacoAdapter().cone_range_for_category("Underglazes") is None

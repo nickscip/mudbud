@@ -22,7 +22,7 @@ from glaze_etl.core.models import (
 from glaze_etl.core.source_adapter import SourceAdapter
 from glaze_etl.sources.amaco.filename_grammar import interpret_filename
 from glaze_etl.sources.amaco.parser import parse_product
-from glaze_etl.sources.amaco.vocabulary import GLAZE_LINE_CODES
+from glaze_etl.sources.amaco.vocabulary import CATEGORY_CONE_RANGE, GLAZE_LINE_CODES
 
 SITEMAP_URL = "https://shop.amaco.com/xmlsitemap.php?type=products&page={page}"
 
@@ -89,6 +89,9 @@ class AmacoAdapter(SourceAdapter):
 
     def interpret_image(self, img: ParsedImage, ctx: ParsedProduct) -> ImageFacts:
         return interpret_filename(img.raw_filename, ctx.code, ctx.name)
+
+    def cone_range_for_category(self, category: str) -> tuple[str, str] | None:
+        return CATEGORY_CONE_RANGE.get(category)
 
 
 def parse_sitemap(xml: str) -> list[ProductRef]:
