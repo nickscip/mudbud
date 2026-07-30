@@ -227,3 +227,22 @@ end if;
 
 raise notice 'contract: vocabulary invariants hold';
 end $$;
+
+-- The database-level lock_timeout from 20260729000200 is the only setting that survives the
+-- hosted poolers, and nothing else would notice it missing: a migration with no timeout does
+-- not fail, it waits forever, and only under contention.
+do $$
+declare got text;
+begin
+  select s into got
+  from pg_db_role_setting, unnest(setconfig) as s
+  where setdatabase = (select oid from pg_database where datname = current_database())
+    and setrole = 0
+    and s like 'lock_timeout=%';
+  if got is distinct from 'lock_timeout=5s' then
+    raise exception 'database-level lock_timeout default is %, expected 5s. '
+      'Poolers drop DSN-level settings, so this default is what protects a hosted db push.',
+      coalesce(got, '<absent>');
+  end if;
+  raise notice 'contract: database lock_timeout default present';
+end $$;
