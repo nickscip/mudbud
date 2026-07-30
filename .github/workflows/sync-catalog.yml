@@ -2,11 +2,15 @@ name: Sync glaze catalog
 
 # Crawls the manufacturer's catalog and ingests only what changed.
 #
-# Chosen over a Temporal deployment deliberately: the workload is one serial pass a week whose
+# Chosen over a workflow engine deliberately: the workload is one serial pass a week whose
 # concurrency is capped at 1 by the source's own 10s crawl-delay, and it is already idempotent
 # and cheap to restart. Temporal Cloud starts at $100/mo and self-hosting means running a server
-# plus its database — neither earns its keep for a weekly cron. The Temporal workflows remain in
-# the repo for when the shape changes: several manufacturers in parallel, or a review gate.
+# plus its database — neither earns its keep for a weekly cron, so the Temporal workflows this
+# once ran under were deleted rather than kept warm. The two shapes that were meant to bring
+# them back are both native here: several manufacturers in parallel is a `strategy.matrix` of
+# independent jobs (each source has its own crawl delay, so there is nothing to orchestrate
+# between them), and a review gate is `environment:` with required reviewers, as
+# deploy-schema.yml already uses. Durability lives in `raw_snapshots`, not in run state.
 #
 # Budget: ~60 minutes a run, almost entirely the mandated delay. Private repos get 2,000 free
 # Actions minutes a month, so a weekly run uses roughly 14%.

@@ -24,17 +24,15 @@ graph TD
   end
 
   subgraph etl["Glaze ETL — etl/glaze_etl/ (Python 3.12, uv)"]
-    entry["cli.py · worker.py · workflows/ (Temporal)"]
-    activities["activities/crawl.py — retries, scheduling"]
+    entry["cli.py — discover · crawl · load · reparse · sync · report"]
     pipeline["core/pipeline.py — stage order"]
     adapter["core/source_adapter.py (ABC)"]
     registry["sources/__init__.py — SOURCES, keyed by manufacturer"]
     amaco["sources/amaco/ — discovery · parser · filename grammar"]
     pure["core/ pure stages<br/>composite_splitter · color · color_namer · normalizer"]
     io["core/ I/O<br/>fetcher · media · blob_store · store · loader"]
-    entry --> activities --> pipeline
+    entry --> pipeline
     entry --> registry
-    activities --> registry
     pipeline --> adapter
     registry -. builds .-> amaco
     adapter -. implemented by .-> amaco
@@ -66,6 +64,13 @@ generated.
 
 **Glaze ETL (`etl/`)** is a standalone uv project, excluded from the Metro bundle. Everything
 manufacturer-specific lives behind `SourceAdapter`; a second manufacturer is one new subclass
-plus its grammar, with no change to a stage, workflow, or table. The parse stage is pure — no
+plus its grammar, with no change to a stage, command, or table. The parse stage is pure — no
 network, no clock, no database — which is what lets a reparse replay the whole corpus in
 seconds.
+
+There is no orchestrator. `glaze-etl sync` is one serial pass whose concurrency is pinned at 1
+by the source's own crawl delay, so scheduling is a GitHub Actions cron
+(`.github/workflows/sync-catalog.yml`) calling the same command a human would. The durability
+that would otherwise justify a workflow engine comes from `raw_snapshots` instead: a run that
+dies halfway leaves every fetched page stored, and the next run re-fetches conditionally and
+skips what has not changed.
