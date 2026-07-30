@@ -50,6 +50,13 @@ class TestCaptionDetection:
 
 
 class TestSplitting:
+    def test_adapter_coat_order_matches_the_three_box_contract(self) -> None:
+        """The splitter hard-refuses anything but three tiles, and the pipeline maps
+        box ordinals through the adapter's coat_order — the two must agree."""
+        from glaze_etl.sources.amaco.adapter import AmacoAdapter
+
+        assert len(AmacoAdapter.coat_order) == 3
+
     @pytest.mark.parametrize("name", COMPOSITES)
     def test_resolves_three_tiles(self, name: str) -> None:
         with load(name) as image:

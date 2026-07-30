@@ -69,7 +69,8 @@ class BBox:
 @dataclass(frozen=True)
 class SplitResult:
     boxes: tuple[BBox, ...] = ()
-    """Left-to-right, matching AMACO's thin-to-thick caption order. Empty on refusal."""
+    """Left-to-right. What that order *means* is the adapter's `coat_order`. Empty on
+    refusal."""
     ok: bool = False
     reason: str = ""
     diagnostics: dict[str, object] = field(default_factory=dict)
@@ -223,9 +224,10 @@ def separated_tiles(background: BackgroundMask) -> tuple[BBox, ...]:
 def split_coats_composite(image: Image.Image) -> SplitResult:
     """Locate the three coat tiles, or refuse and explain.
 
-    Boxes come back left to right, which is AMACO's thin-to-thick order in every composite
-    examined. Mapping them onto coat levels is the caller's job, so that assumption stays
-    visible at the call site rather than buried here.
+    Boxes come back left to right. Mapping them onto coat levels is the adapter's job
+    (`coat_order`) — only an adapter that classifies an image as COATS_COMPOSITE routes
+    it here, so this stays an AMACO-layout utility a source opts into, not generic code
+    asserting how every manufacturer photographs thickness.
     """
     rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
     gray = rgb.mean(axis=2)

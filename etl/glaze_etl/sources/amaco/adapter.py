@@ -11,6 +11,7 @@ import httpx
 from selectolax.parser import HTMLParser
 
 from glaze_etl.core.models import (
+    CoatLevel,
     ImageFacts,
     ManufacturerKey,
     ParsedImage,
@@ -56,6 +57,10 @@ class AmacoAdapter(SourceAdapter):
     # robots.txt lists AI agents (ClaudeBot, GPTBot, anthropic-ai, ...) with a
     # Crawl-delay of 10 and *no* Disallow: /. Product pages are permitted; the delay
     # is honoured by the Fetcher, and a full glaze pass therefore takes ~50 minutes.
+
+    coat_order = (CoatLevel.LIGHT, CoatLevel.SLIGHTLY_LIGHT, CoatLevel.SLIGHTLY_HEAVY)
+    """AMACO's composites read thin-to-thick left to right, three tiles per image —
+    the splitter refuses anything that is not exactly three, so HEAVY never appears."""
 
     def __init__(self, client: httpx.AsyncClient | None = None) -> None:
         self._client = client

@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 
 from glaze_etl.core.models import (
+    CoatLevel,
     ImageFacts,
     ManufacturerKey,
     ParsedImage,
@@ -24,6 +25,10 @@ from glaze_etl.core.models import (
 class SourceAdapter(ABC):
     manufacturer: ManufacturerKey
     politeness: Politeness
+    coat_order: tuple[CoatLevel, ...] = ()
+    """Maps a split composite's region ordinal to a coat level. The composite layout is
+    source knowledge — AMACO's read thin-to-thick left to right. Empty means this source
+    never classifies an image as COATS_COMPOSITE, so nothing ever consults it."""
 
     @abstractmethod
     def discover(self, since: datetime | None = None) -> AsyncIterator[ProductRef]:

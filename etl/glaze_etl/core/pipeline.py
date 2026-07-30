@@ -14,20 +14,11 @@ import structlog
 from glaze_etl.core.color_namer import ColorNamer
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import MediaProcessor
-from glaze_etl.core.models import CoatLevel, ImageRole, ParsedProduct, RawSnapshot
+from glaze_etl.core.models import ImageRole, ParsedProduct, RawSnapshot
 from glaze_etl.core.payloads import ImagePayload, RegionPayload
 from glaze_etl.core.source_adapter import SourceAdapter
 
 log = structlog.get_logger(__name__)
-
-_COAT_ORDER: tuple[CoatLevel, ...] = (
-    CoatLevel.LIGHT,
-    CoatLevel.SLIGHTLY_LIGHT,
-    CoatLevel.SLIGHTLY_HEAVY,
-)
-"""AMACO's composites read thin-to-thick left to right, and the splitter returns boxes in
-that order. Mapping lives here rather than in the splitter so the assumption is visible at
-the point where it becomes data."""
 
 
 @dataclass
@@ -98,13 +89,21 @@ async def ingest_product(
                         image.raw_filename,
                         {"reason": stored.split_refusal},
                     )
+                if stored.regions and len(adapter.coat_order) < len(stored.regions):
+                    # A source that classifies images as COATS_COMPOSITE must also say
+                    # what the region positions mean; failing here is loud where an
+                    # IndexError in the comprehension below would not be.
+                    raise ValueError(
+                        f"{adapter.manufacturer.value} emitted a coats composite "
+                        "without a coat_order to map its regions"
+                    )
                 payload = ImagePayload(
                     facts=facts,
                     source_url=str(image.source_url),
                     raw_filename=image.raw_filename,
                     regions=tuple(
                         RegionPayload(
-                            coat_level=_COAT_ORDER[region.ordinal],
+                            coat_level=adapter.coat_order[region.ordinal],
                             crop_bbox=region.bbox.as_dict(),
                             hex_dominant=region.color.dominant_hex,
                             hex_secondary=region.color.secondary_hex,
