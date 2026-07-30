@@ -191,30 +191,9 @@ def reparse(
     products = 0
 
     with db_connect(settings.database_url) as conn:
-        # Newest snapshot per URL only; older ones are history, not current truth.
-        # Scoped to the manufacturer, or a second source's pages would be replayed
-        # through this one's grammar.
-        rows = conn.execute(
-            """
-            select distinct on (s.url)
-                   s.url, s.fetched_at, s.http_status, s.etag, s.content_hash, s.body
-            from raw_snapshots s
-            join manufacturers m on m.id = s.manufacturer_id
-            where m.key = %s
-            order by s.url, s.fetched_at desc
-            """,
-            (adapter.manufacturer.value,),
-        ).fetchall()
+        snapshots = PostgresSnapshotStore(conn).newest_per_url(adapter.manufacturer)
 
-    for url, fetched_at, status, etag, digest, body in rows:
-        snapshot = RawSnapshot(
-            url=url,
-            fetched_at=fetched_at,
-            http_status=status,
-            etag=etag,
-            content_hash=digest,
-            body=body,
-        )
+    for snapshot in snapshots:
         product = adapter.parse(snapshot)
         products += 1
         for image in product.images:
@@ -293,27 +272,13 @@ def load(
             loader = Loader(conn, normalizer)
             namer = _color_namer(conn)
 
-            # Scoped to the manufacturer, or a second source's pages would be fed to
-            # this one's parser.
-            query = """
-                select distinct on (s.url)
-                       s.url, s.fetched_at, s.http_status, s.etag, s.content_hash, s.body
-                from raw_snapshots s
-                join manufacturers m on m.id = s.manufacturer_id
-                where m.key = %(manufacturer)s {extra}
-                order by s.url, s.fetched_at desc
-            """
-            params: dict[str, object] = {"manufacturer": adapter.manufacturer.value}
-            if slug:
-                # Must byte-match what the Fetcher stored, so build via the adapter.
-                params["urls"] = [str(adapter.product_ref(s).url) for s in slug]
-                rows = conn.execute(
-                    query.format(extra="and s.url = any(%(urls)s)"), params
-                ).fetchall()
-            else:
-                rows = conn.execute(query.format(extra=""), params).fetchall()
+            # Must byte-match what the Fetcher stored, so build URLs via the adapter.
+            urls = [str(adapter.product_ref(s).url) for s in slug] if slug else None
+            snapshots = PostgresSnapshotStore(conn).newest_per_url(
+                adapter.manufacturer, urls
+            )
 
-            log.info("load.start", snapshots=len(rows), images=images)
+            log.info("load.start", snapshots=len(snapshots), images=images)
 
             async with httpx.AsyncClient(
                 timeout=settings.request_timeout_s,
@@ -330,15 +295,7 @@ def load(
                     if images
                     else None
                 )
-                for url, fetched_at, status, etag, digest, body in rows:
-                    snapshot = RawSnapshot(
-                        url=url,
-                        fetched_at=fetched_at,
-                        http_status=status,
-                        etag=etag,
-                        content_hash=digest,
-                        body=body,
-                    )
+                for snapshot in snapshots:
                     await ingest_product(snapshot, adapter, loader, media, namer)
 
             inherited = loader.inherit_line_cones()

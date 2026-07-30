@@ -19,6 +19,7 @@ import os
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
+import psycopg
 import pytest
 
 from glaze_etl.core.models import ManufacturerKey, RawSnapshot
@@ -35,10 +36,10 @@ URL = "https://shop.amaco.com/pc-20-blue-rutile/"
 BASE = datetime(2026, 7, 26, 12, 0, tzinfo=UTC)
 
 
-def snap(version: int, *, etag: str | None = None) -> RawSnapshot:
+def snap(version: int, *, etag: str | None = None, url: str = URL) -> RawSnapshot:
     body = f"<html>v{version}</html>"
     return RawSnapshot(
-        url=URL,
+        url=url,
         fetched_at=BASE + timedelta(minutes=version),
         http_status=200,
         body=body,
@@ -48,15 +49,18 @@ def snap(version: int, *, etag: str | None = None) -> RawSnapshot:
 
 
 @pytest.fixture
-def pg_store() -> Iterator[PostgresSnapshotStore]:
-    import psycopg
-
+def pg_conn() -> Iterator[psycopg.Connection[tuple[object, ...]]]:
     assert DSN
     with psycopg.connect(DSN) as conn:
         conn.execute("delete from raw_snapshots where url = %s", (URL,))
         conn.commit()
-        yield PostgresSnapshotStore(conn)
+        yield conn
         conn.rollback()
+
+
+@pytest.fixture
+def pg_store(pg_conn: psycopg.Connection[tuple[object, ...]]) -> PostgresSnapshotStore:
+    return PostgresSnapshotStore(pg_conn)
 
 
 @pytest.fixture(params=["memory", "postgres"])
@@ -101,3 +105,92 @@ class TestEquivalence:
         store.insert(ManufacturerKey.AMACO, snap(1, etag=None))
         head = store.head(URL)
         assert head is not None and head.etag is None
+
+
+class TestReadBack:
+    """The replay side, used by `load`, `reparse` and the ingest activity.
+
+    Postgres-only: these are not on the `SnapshotStore` Protocol, because the Fetcher
+    never replays and should not carry the dependency.
+    """
+
+    OTHER = "https://shop.amaco.com/pc-30-temmoku/"
+
+    @pytest.fixture(autouse=True)
+    def _clean_other_url(self, pg_conn: psycopg.Connection[tuple[object, ...]]) -> None:
+        pg_conn.execute("delete from raw_snapshots where url = %s", (self.OTHER,))
+        pg_conn.commit()
+
+    def test_newest_returns_the_latest_body_for_a_url(
+        self, pg_store: PostgresSnapshotStore
+    ) -> None:
+        pg_store.insert(ManufacturerKey.AMACO, snap(1))
+        pg_store.insert(ManufacturerKey.AMACO, snap(3))
+        pg_store.insert(ManufacturerKey.AMACO, snap(2))
+
+        snapshot = pg_store.newest(URL, ManufacturerKey.AMACO)
+
+        assert snapshot is not None
+        assert snapshot.body == "<html>v3</html>"
+        assert snapshot.content_hash == "hash-3"
+        assert str(snapshot.url) == URL
+
+    def test_newest_is_none_when_the_source_never_stored_it(
+        self, pg_store: PostgresSnapshotStore
+    ) -> None:
+        assert pg_store.newest(URL, ManufacturerKey.AMACO) is None
+
+    def test_newest_per_url_keeps_one_row_per_url(
+        self, pg_store: PostgresSnapshotStore
+    ) -> None:
+        pg_store.insert(ManufacturerKey.AMACO, snap(1))
+        pg_store.insert(ManufacturerKey.AMACO, snap(2))
+        pg_store.insert(ManufacturerKey.AMACO, snap(1, url=self.OTHER))
+
+        got = {str(s.url): s.content_hash for s in pg_store.newest_per_url(ManufacturerKey.AMACO)}
+
+        assert got[URL] == "hash-2", "older rows are history, not current truth"
+        assert got[self.OTHER] == "hash-1"
+
+    def test_newest_per_url_narrows_to_the_urls_asked_for(
+        self, pg_store: PostgresSnapshotStore
+    ) -> None:
+        pg_store.insert(ManufacturerKey.AMACO, snap(1))
+        pg_store.insert(ManufacturerKey.AMACO, snap(1, url=self.OTHER))
+
+        got = pg_store.newest_per_url(ManufacturerKey.AMACO, [URL])
+
+        assert [str(s.url) for s in got] == [URL]
+
+    def test_an_empty_url_list_means_none_rather_than_everything(
+        self, pg_store: PostgresSnapshotStore
+    ) -> None:
+        """`[]` is a caller asking for nothing; only `None` means the whole corpus."""
+        pg_store.insert(ManufacturerKey.AMACO, snap(1))
+        assert pg_store.newest_per_url(ManufacturerKey.AMACO, []) == []
+
+    def test_another_sources_snapshot_is_invisible(
+        self, pg_store: PostgresSnapshotStore, pg_conn: psycopg.Connection[tuple[object, ...]]
+    ) -> None:
+        """The drift these methods exist to remove: a page stored by one source must not
+        be handed to another source's parser just because the URL matches.
+
+        Written by inserting the foreign row directly, since `ManufacturerKey` has only
+        one member today — the collision is reachable in SQL before it is in Python.
+        """
+        pg_conn.execute(
+            "insert into manufacturers (key, name, site_url)"
+            " values ('testco', 'Test Co', 'https://example.test')"
+        )
+        pg_conn.execute(
+            """
+            insert into raw_snapshots
+              (manufacturer_id, url, fetched_at, http_status, content_hash, body)
+            select m.id, %s, %s, 200, 'hash-foreign', '<html>not ours</html>'
+            from manufacturers m where m.key = 'testco'
+            """,
+            (URL, BASE + timedelta(hours=1)),
+        )
+
+        assert pg_store.newest_per_url(ManufacturerKey.AMACO) == []
+        assert pg_store.newest(URL, ManufacturerKey.AMACO) is None

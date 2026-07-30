@@ -1,12 +1,21 @@
-"""Persistence for the crawl log, expressed as a narrow protocol.
+"""Persistence for the crawl log — every `raw_snapshots` query lives here.
 
-The Fetcher needs exactly three things from storage: what it saw for a URL last time,
-somewhere to put a new snapshot, and a way to prune. Defining that as a Protocol keeps
-the Fetcher testable without a database and keeps the SQL in one place.
+Two audiences, deliberately different shapes. The Fetcher needs exactly three things
+from storage: what it saw for a URL last time, somewhere to put a new snapshot, and a
+way to prune. That is the `SnapshotStore` Protocol, kept narrow so the Fetcher stays
+testable against an in-memory double.
+
+The read-back side — replaying stored pages through the parser — is needed only by the
+CLI and the Temporal activities, both of which hold a real connection. Those methods
+live on `PostgresSnapshotStore` alone rather than on the Protocol, so the Fetcher does
+not acquire a dependency on queries it never issues. They are here, and not inlined
+into their callers, because three hand-written copies of "newest snapshot per URL" had
+already drifted apart on whether to scope by manufacturer.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -123,3 +132,51 @@ class PostgresSnapshotStore:
                 (url, keep),
             )
             return cur.rowcount
+
+    def newest(self, url: str, manufacturer: ManufacturerKey) -> RawSnapshot | None:
+        """The current snapshot for one URL, or None if this source has never stored it.
+
+        Scoped by manufacturer because the caller has already chosen a parser from the
+        same key: an unscoped lookup would hand one source's HTML to another's parser
+        whenever the pair disagrees.
+        """
+        with self._conn.cursor(row_factory=class_row(RawSnapshot)) as cur:
+            cur.execute(
+                """
+                select s.url, s.fetched_at, s.http_status, s.etag, s.content_hash, s.body
+                from raw_snapshots s
+                join manufacturers m on m.id = s.manufacturer_id
+                where s.url = %s and m.key = %s
+                order by s.fetched_at desc
+                limit 1
+                """,
+                (url, manufacturer.value),
+            )
+            return cur.fetchone()
+
+    def newest_per_url(
+        self, manufacturer: ManufacturerKey, urls: Sequence[str] | None = None
+    ) -> list[RawSnapshot]:
+        """This source's current snapshot for every URL it holds, newest per URL.
+
+        Older rows are history, not current truth. ``urls`` narrows to a specific set —
+        they must byte-match what the Fetcher stored, so callers build them through the
+        adapter's `product_ref` rather than by string-formatting a host.
+        """
+        with self._conn.cursor(row_factory=class_row(RawSnapshot)) as cur:
+            cur.execute(
+                """
+                select distinct on (s.url)
+                       s.url, s.fetched_at, s.http_status, s.etag, s.content_hash, s.body
+                from raw_snapshots s
+                join manufacturers m on m.id = s.manufacturer_id
+                where m.key = %(manufacturer)s
+                  and (%(urls)s::text[] is null or s.url = any(%(urls)s::text[]))
+                order by s.url, s.fetched_at desc
+                """,
+                {
+                    "manufacturer": manufacturer.value,
+                    "urls": list(urls) if urls is not None else None,
+                },
+            )
+            return cur.fetchall()
