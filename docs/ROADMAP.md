@@ -12,11 +12,19 @@ reads the catalog over the anon key and **never writes to it**.
 Facts to keep in mind while reading:
 
 - The catalog is **two manufacturers** as of F10–F14: AMACO (352 glazes, 1237 appearances)
-  and Mayco (630 glaze products discoverable). Brand-shaped work is no longer a no-op —
-  A7's facet discriminates and D6's cross-brand similars light up — but note the two are
-  loaded to different places: AMACO is on the hosted project, Mayco has only been loaded
-  locally. The hosted load is a `sync-catalog` dispatch after `deploy-schema.yml` applies
-  `20260730000100`/`20260730000200`.
+  and Mayco (**630** glaze products discoverable, verified by parsing the whole captured
+  corpus). Brand-shaped work is no longer a no-op — A7's facet discriminates and D6's
+  cross-brand similars light up.
+  **Neither database holds all of it yet.** AMACO is loaded on the hosted project; Mayco is
+  loaded *only locally and only partially* — 107 glazes across 8 of its 25 lines, enough to
+  prove the pipeline end to end but not the catalog. Nobody has run a full Mayco pass
+  anywhere, so the `mayco` floor in `data_quality.sql` will fire until one completes. The
+  first is a `sync-catalog` dispatch after `deploy-schema.yml` applies
+  `20260730000100`/`20260730000200`; budget ~1.75 hours for the Mayco leg.
+  Worth knowing about that gap: correctness was established by replaying all 630 products
+  through the parser offline (zero parse failures, zero unknown attributes, zero unmapped
+  cone categories, 630 distinct codes) rather than by a full crawl. The full crawl is an
+  endurance and floor check, not the correctness evidence.
 - **`etl/.env` points `SUPABASE_DB_URL` at the hosted project, not at the local stack.** So
   a bare `glaze-etl sync` writes to production. Override the three `SUPABASE_*` variables on
   the command line for local work. This is worth knowing before the first run, not after.
