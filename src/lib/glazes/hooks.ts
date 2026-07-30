@@ -42,17 +42,29 @@ export function useGlazeSearch(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Which request is allowed to write. The two hooks below guard with an effect-local
+  // `cancelled` flag, which is not enough here: `retry` calls `run` from outside the effect, so
+  // the guard has to belong to the hook rather than to one effect run. Without it two requests
+  // can resolve out of order and the *older* one wins — harmless while the only caller debounced
+  // keystrokes and the next keystroke corrected it, and not harmless once a caller switches
+  // filters wholesale and nothing follows to fix the result.
+  const latest = useRef(0);
+
   const run = useCallback(
     async (query: string, active: GlazeFilters) => {
+      const ticket = ++latest.current;
       setLoading(true);
       setError(null);
       try {
-        setResults(await searchGlazes(query, active, limit));
+        const next = await searchGlazes(query, active, limit);
+        if (ticket === latest.current) setResults(next);
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "Search failed");
-        setResults(NO_RESULTS);
+        if (ticket === latest.current) {
+          setError(caught instanceof Error ? caught.message : "Search failed");
+          setResults(NO_RESULTS);
+        }
       } finally {
-        setLoading(false);
+        if (ticket === latest.current) setLoading(false);
       }
     },
     [limit]
@@ -63,6 +75,9 @@ export function useGlazeSearch(
 
   useEffect(() => {
     if (!enabled) {
+      // Retires any request already in flight as well as clearing what is shown, or a result
+      // fetched while the caller still wanted one would land afterwards and undo this.
+      latest.current += 1;
       setResults(NO_RESULTS);
       return;
     }

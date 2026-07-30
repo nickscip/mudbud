@@ -53,9 +53,12 @@ export default function GlazeListsScreen() {
   );
 
   const { results, loading, error, retry } = useGlazeSearch("", filters, {
+    // The ref list is exact, so the limit is simply its length — there is no ranked tail to
+    // page through, and a page-sized default would silently drop a large collection's overflow.
+    // Zero needs no request at all, which is also what keeps the limit from being zero.
     enabled: glazeCatalogConfigured && segmentMarks.length > 0,
     debounceMs: 0,
-    limit: Math.max(segmentMarks.length, 1),
+    limit: segmentMarks.length,
   });
 
   const hitsByKey = useMemo(
@@ -65,6 +68,12 @@ export default function GlazeListsScreen() {
       ),
     [results]
   );
+
+  // Whether the hits on hand actually belong to the segment being shown. A tab switch replaces
+  // the marks immediately and the catalog answer arrives later, so "some hits exist" is not the
+  // same question as "these hits are for this list" — asking the looser one rendered every row
+  // as its offline fallback for a whole round trip, which reads as a failure rather than a wait.
+  const segmentIsAnswered = segmentMarks.some((m) => hitsByKey.has(markKey(m)));
 
   const openGlaze = (ref: GlazeRef) =>
     router.push({ pathname: "/glazes/[manufacturer]/[code]", params: ref });
@@ -79,17 +88,24 @@ export default function GlazeListsScreen() {
 
       {/* The catalog being unreachable — offline, or not configured — must not hide the lists:
           membership is local, and the denormalized name is enough to know what is on the
-          shelf. Cards quietly degrade to name rows instead of the screen going empty. */}
-      {error ? (
+          shelf. Cards quietly degrade to name rows instead of the screen going empty. Both
+          reasons say so out loud, because a screen of bare names with no explanation reads as
+          a broken list rather than a deliberate fallback — and an unconfigured catalog never
+          raises an error, so it would otherwise say nothing at all. */}
+      {error || !glazeCatalogConfigured ? (
         <View className="mx-4 mt-3 flex-row items-center rounded-2xl bg-stone-50 px-4 py-3 border border-stone-200">
           <Txt variant="caption" className="flex-1 text-xs">
-            Couldn't reach the catalog — showing saved names only.
+            {glazeCatalogConfigured
+              ? "Couldn't reach the catalog — showing saved names only."
+              : "Catalog not connected — showing saved names only."}
           </Txt>
-          <PressableScale onPress={retry} hitSlop={8}>
-            <Txt variant="label" className="text-xs text-clay-600">
-              Try again
-            </Txt>
-          </PressableScale>
+          {glazeCatalogConfigured ? (
+            <PressableScale onPress={retry} hitSlop={8}>
+              <Txt variant="label" className="text-xs text-clay-600">
+                Try again
+              </Txt>
+            </PressableScale>
+          ) : null}
         </View>
       ) : null}
 
@@ -99,7 +115,7 @@ export default function GlazeListsScreen() {
           title={MARK_FILTERS[tab].empty}
           body="Open a glaze and save it — your marks stay on this device and work offline."
         />
-      ) : loading && hitsByKey.size === 0 && !error ? (
+      ) : loading && !segmentIsAnswered && !error ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator />
         </View>

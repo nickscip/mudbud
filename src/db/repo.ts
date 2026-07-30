@@ -253,15 +253,23 @@ export async function toggleGlazeFavorite(ref: GlazeRef): Promise<void> {
 }
 
 /**
- * Write the private note on a glaze already owned.
+ * Write the private note on a marked glaze.
  *
- * Same shape as the favourite toggle and for the same reason: "notes only on owned" lives here,
- * so no screen can conjure a note onto a wishlist row. Whitespace stores NULL rather than an
- * empty string, so "has a note" checks stay honest.
+ * Guarded on the row existing rather than on it being owned, which is a narrower guard than it
+ * looks and deliberately so. The screens only offer the field while a glaze is owned, so nothing
+ * can author a note onto a wishlist row in the first place; what the row check buys is the two
+ * cases where a write lands late. The editor autosaves on a debounce, so a save can arrive after
+ * the mark has already moved — and an owned-only guard silently dropped exactly that text when
+ * the user typed and then pressed Wishlist inside the debounce window. Demotion keeps the note
+ * (see `setGlazeMarkState`), so dropping the write contradicted the model as well as losing
+ * words. A write after the mark is *cleared* still no-ops, because the row is gone and
+ * resurrecting a note onto a deleted mark is the one outcome that would be wrong.
+ *
+ * Whitespace stores NULL rather than an empty string, so "has a note" checks stay honest.
  */
 export async function setGlazeMarkNote(ref: GlazeRef, note: string): Promise<void> {
   const existing = await db.query.glazeMarks.findFirst({ where: sameGlaze(ref) });
-  if (!existing || existing.state !== "owned") return;
+  if (!existing) return;
 
   await db
     .update(glazeMarks)
