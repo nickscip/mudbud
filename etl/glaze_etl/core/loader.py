@@ -263,6 +263,18 @@ class Loader:
         Deliberately separate from the main load, because the base glaze may be crawled
         after the image that references it, and a withdrawn base should leave the link
         null rather than fail the load.
+
+        **A glaze is never layered over itself**, and refusing that here rather than trusting
+        the grammars is what makes it true. A layering photograph legitimately appears on both
+        glazes' pages — AMACO's `PC-70_over_PCF-54_16M_Vase` is on PC-70's *and* PCF-54's — but
+        the pair only means something in one direction. On the base's page the filename names
+        the same two codes, the grammar reads the top-over-base order out of the filename with
+        no idea whose page it is on, and the result is `PCF-54 over PCF-54`.
+        Measured before adding this: 59 of AMACO's 130 links and 3 of Mayco's 9 were
+        self-referential — 45% of the layering data. They inflate `glaze_hit.layering_count`
+        and would render in D4's Combos tab as a glaze layered over itself.
+        Suppressing is the whole correction, not a partial one: the real pair is already
+        recorded on the *other* glaze's page, where that glaze is the top one.
         """
         cursor = self._conn.execute(
             """
@@ -272,6 +284,7 @@ class Loader:
             where a.glaze_id = subject.id
               and base.manufacturer_id = subject.manufacturer_id
               and base.code = a.evidence->>'layered_over_code'
+              and base.id <> subject.id
               and a.layered_over_glaze_id is null
               and coalesce(a.evidence->>'layered_over_code', '') <> ''
             """

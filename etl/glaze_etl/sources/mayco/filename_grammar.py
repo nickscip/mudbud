@@ -169,11 +169,23 @@ def interpret_filename(
             # top of SW-214, so the subject is the *other* code. Recording it as
             # "SW-214 over SW-401" would invent a layering that does not exist, and
             # link_layering would write that inversion into the database.
-            subject, layered_over = (
-                (codes[0], codes[1]) if word == "over" else (codes[1], codes[0])
-            )
-            evidence["layering"] = f"{subject} over {layered_over}"
+            top, base = (codes[0], codes[1]) if word == "over" else (codes[1], codes[0])
+            subject = top
+            evidence["layering"] = f"{top} over {base}"
             evidence["layering_direction"] = word
+            # `layered_over_code` is only set when the page's own glaze is the *top* one,
+            # because that is the only direction the field can express: the appearance is
+            # attached to whichever glaze's page the image was found on, so on the base's
+            # page "layered over base" reads as the glaze layered over itself. Mayco
+            # publishes both `sw401_over_sw119` and `sw401_under_sw119` on SW-401's page,
+            # so both directions really do occur on one product.
+            # The pair is not lost by declining it here — it is recorded on the other
+            # glaze's page, where that glaze is the top one. The loader refuses a
+            # self-referential link as well, since AMACO's grammar has the same blind spot.
+            if product_code is not None and product_code == base:
+                evidence["layered_under"] = top
+            else:
+                layered_over = base
     if layered_over is None and len(codes) > 1:
         # Several codes with no single pair to extract — `sw214_over_sw401_sw402` shows the
         # glaze over two different fluxes in one frame, which `layered_over_glaze_id`

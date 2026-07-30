@@ -581,9 +581,35 @@ class TestGrammar:
         "SW-214 over SW-401" would write an inverted layering into the database, because
         `link_layering` trusts this field.
         """
-        facts = interpret_filename("sw214_under_sw401_cone6.jpg", "SW-214")
+        # Read from SW-401's page, where SW-401 is the top glaze, so the pair is expressible.
+        facts = interpret_filename("sw214_under_sw401_cone6.jpg", "SW-401")
         assert (facts.subject_code, facts.layered_over_code) == ("SW-401", "SW-214")
         assert facts.evidence["layering_direction"] == "under"
+
+    def test_the_base_glaze_is_not_layered_over_itself(self) -> None:
+        """The same image is on both glazes' pages, and the pair means something in only one
+        direction.
+
+        `layered_over_code` describes the glaze the appearance is attached to, which is
+        whichever page the image was found on. So on SW-119's page `sw401_over_sw119` must not
+        claim SW-119 sits on SW-119. Measured before this guard existed: 3 of Mayco's 9
+        layering links were self-referential, and 59 of AMACO's 130 — 45% of the data.
+        """
+        facts = interpret_filename("sw401_over_sw119_crop.jpg", "SW-119")
+        assert facts.layered_over_code is None
+        assert facts.evidence["layered_under"] == "SW-401"
+        # ...and the same image on the top glaze's page still records the pair.
+        assert interpret_filename("sw401_over_sw119_crop.jpg", "SW-401").layered_over_code == (
+            "SW-119"
+        )
+
+    def test_under_on_the_base_glazes_own_page_is_also_refused(self) -> None:
+        """Mayco publishes `sw401_over_sw119` and `sw401_under_sw119` on the same product, so
+        both directions occur for one glaze. On SW-401's page the `under` frame makes SW-401
+        the base."""
+        facts = interpret_filename("sw401_under_sw119_crop.jpg", "SW-401")
+        assert facts.layered_over_code is None
+        assert facts.evidence["layered_under"] == "SW-119"
 
     def test_three_codes_are_a_combination_not_a_pair(self) -> None:
         """`sw214_over_sw401_sw402` is one frame showing the glaze over two fluxes, which
