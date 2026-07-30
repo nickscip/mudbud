@@ -9,6 +9,11 @@ from __future__ import annotations
 
 from glaze_etl.core.models import FormKind
 
+FIRED_PATH = "/product-category/color/fired/"
+"""The branch of the category tree that holds fired glaze, as it appears in every
+descendant's `link`. Matched as a path rather than by the `fired` slug because a product
+deep in the branch does not necessarily list the intermediate term — see `is_glaze`."""
+
 FIRED_CATEGORY_ID = 98
 """`product_cat` term id for `color/fired`. Mayco's category tree splits cleanly:
 `color/fired/*` is glaze, `color/non-fired/*` is acrylics and metallics,

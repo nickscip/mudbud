@@ -410,10 +410,51 @@ class TestDiscovery:
     def test_the_filter_fails_closed(self) -> None:
         """A product whose categories we cannot read is not a glaze."""
         assert is_glaze([]) is False
-        assert is_glaze([{"slug": "tools"}]) is False
+        assert is_glaze(
+            [{"slug": "tools", "link": "https://www.maycocolors.com/product-category/tools/"}]
+        ) is False
 
     def test_fired_alone_is_enough(self) -> None:
-        assert is_glaze([{"slug": "color"}, {"slug": "fired"}]) is True
+        assert is_glaze(
+            [
+                {"slug": "color", "link": "https://www.maycocolors.com/product-category/color/"},
+                {
+                    "slug": "fired",
+                    "link": "https://www.maycocolors.com/product-category/color/fired/",
+                },
+            ]
+        ) is True
+
+    def test_a_product_deep_in_the_branch_counts(self) -> None:
+        """Worth 32 glazes. Bead and Melt Gloop sit in `color/fired/ritual-glazes/bead/` and
+        their category array never lists the intermediate `fired` — only `bead`,
+        `ritual-glazes` and `new-colors`. Requiring the `fired` slug fetched them into the
+        allowlist query (Woo returns descendants for ?category=98) and then discarded them."""
+        assert is_glaze(
+            [
+                {
+                    "slug": "bead",
+                    "link": "https://www.maycocolors.com/product-category/color/fired/"
+                    "ritual-glazes/bead/",
+                },
+                {
+                    "slug": "new-colors",
+                    "link": "https://www.maycocolors.com/product-category/color/new-colors/",
+                },
+            ]
+        ) is True
+
+    def test_a_sibling_branch_does_not_count(self) -> None:
+        """`non-fired` is a different child of `color`, and its path must not match."""
+        assert is_glaze(
+            [
+                {
+                    "slug": "softees-acrylics",
+                    "link": "https://www.maycocolors.com/product-category/color/non-fired/"
+                    "softees-acrylics/",
+                }
+            ]
+        ) is False
 
 
 class TestGrammar:

@@ -34,6 +34,7 @@ from glaze_etl.sources.mayco.vocabulary import (
     CATEGORY_CONE_RANGE,
     EXCLUDED_CATEGORIES,
     FIRED_CATEGORY_ID,
+    FIRED_PATH,
 )
 
 SITEMAP_INDEX_URL = f"{SITE}/sitemap_index.xml"
@@ -48,17 +49,28 @@ _ALLOWLIST_PAGE_SIZE = 100
 
 
 def is_glaze(categories: list[dict[str, object]]) -> bool:
-    """A product is a glaze if Mayco files it under `color/fired` and not as a kit.
+    """A product is a glaze if Mayco files it anywhere under `color/fired`, and not as a kit.
 
     This is the whole non-glaze filter, and it is evidence rather than inference: the
     category tree separates fired colour from acrylics, bisque forms, brushes and wax
-    resist, and a chip chart or a kit is excluded by name. Contrast AMACO, where the only
+    resist, and a kit or chip chart is excluded by name. Contrast AMACO, where the only
     available signal was the shape of the slug.
+
+    **Tested on the tree path, not on the presence of the `fired` slug**, and that
+    distinction is worth 32 glazes. An earlier version required `"fired" in slugs`, which
+    quietly dropped every Bead and Melt Gloop product: they sit in
+    `color/fired/ritual-glazes/bead/` and their `categories` array lists `bead`,
+    `ritual-glazes` and `new-colors` — never the intermediate `fired`. The Store API returns
+    them for `?category=98` because Woo includes descendants, so they were fetched into the
+    allowlist query and then discarded from it. Every `link` under the branch contains the
+    branch's own path, including `fired`'s own, so one substring test covers both depths.
 
     Fails closed. A product whose categories we cannot read is not a glaze.
     """
     slugs = {str(c.get("slug") or "") for c in categories}
-    return "fired" in slugs and not (slugs & EXCLUDED_CATEGORIES)
+    if slugs & EXCLUDED_CATEGORIES:
+        return False
+    return any(FIRED_PATH in str(c.get("link") or "") for c in categories)
 
 
 class MaycoAdapter(SourceAdapter):
