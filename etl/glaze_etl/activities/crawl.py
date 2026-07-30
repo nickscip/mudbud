@@ -24,11 +24,11 @@ from glaze_etl.core.db import connect as db_connect
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import MediaProcessor
-from glaze_etl.core.models import ManufacturerKey, ProductRef, RawSnapshot
+from glaze_etl.core.models import ProductRef, RawSnapshot
 from glaze_etl.core.normalizer import Normalizer, load_vocabularies
 from glaze_etl.core.pipeline import ingest_product
 from glaze_etl.core.store import PostgresSnapshotStore
-from glaze_etl.sources.amaco.adapter import AmacoAdapter
+from glaze_etl.sources import adapter_for
 
 
 @dataclass
@@ -64,12 +64,6 @@ class IngestOutput:
     appearances: int
 
 
-def _adapter(key: str) -> AmacoAdapter:
-    if key != ManufacturerKey.AMACO.value:
-        raise ValueError(f"no adapter for {key!r}")
-    return AmacoAdapter()
-
-
 @activity.defn
 async def discover_products(payload: DiscoverInput) -> list[str]:
     """Return the glaze product URLs worth fetching.
@@ -78,7 +72,7 @@ async def discover_products(payload: DiscoverInput) -> list[str]:
     durable: a worker restart mid-crawl resumes from the same list rather than re-deriving
     a possibly different one.
     """
-    adapter = _adapter(payload.manufacturer)
+    adapter = adapter_for(payload.manufacturer)
     urls: list[str] = []
     async for ref in adapter.discover():
         urls.append(str(ref.url))
@@ -97,7 +91,7 @@ async def fetch_product(payload: FetchInput) -> FetchOutput:
     worker restart instead of turning into a burst.
     """
     settings = Settings()
-    adapter = _adapter(payload.manufacturer)
+    adapter = adapter_for(payload.manufacturer)
     # The external id is derived here rather than carried in the payload: slug-from-URL
     # is source knowledge, and a workflow computing it its own way once disagreed with
     # the adapter about whether the id is the whole path or its last segment.
@@ -111,7 +105,7 @@ async def fetch_product(payload: FetchInput) -> FetchOutput:
             fetcher = Fetcher(
                 client,
                 store,
-                ManufacturerKey(payload.manufacturer),
+                adapter.manufacturer,
                 adapter.politeness,
                 retention=settings.snapshot_retention,
                 max_attempts=settings.max_attempts,
@@ -134,7 +128,7 @@ async def ingest_snapshot(payload: IngestInput) -> IngestOutput:
     wasteful when the durable copy is already in Postgres.
     """
     settings = Settings()
-    adapter = _adapter(payload.manufacturer)
+    adapter = adapter_for(payload.manufacturer)
 
     with db_connect(settings.database_url) as conn:
         row = conn.execute(

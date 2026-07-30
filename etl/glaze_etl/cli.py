@@ -25,15 +25,16 @@ from glaze_etl.core.db import stored_object_keys
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import MediaProcessor
-from glaze_etl.core.models import ManufacturerKey, ProductRef, RawSnapshot
+from glaze_etl.core.models import ProductRef, RawSnapshot
 from glaze_etl.core.normalizer import Normalizer, load_vocabularies
 from glaze_etl.core.pipeline import ingest_product
+from glaze_etl.core.source_adapter import SourceAdapter
 from glaze_etl.core.store import (
     InMemorySnapshotStore,
     PostgresSnapshotStore,
     SnapshotStore,
 )
-from glaze_etl.sources.amaco.adapter import AmacoAdapter
+from glaze_etl.sources import adapter_for
 
 app = typer.Typer(add_completion=False, help="Glaze catalog ETL.")
 
@@ -46,15 +47,18 @@ structlog.configure(
 )
 log = structlog.get_logger("glaze_etl")
 
+ManufacturerOption = Annotated[str, typer.Option(help="Source key, e.g. amaco.")]
+
 
 @app.command()
 def discover(
     limit: Annotated[int, typer.Option(help="Stop after this many refs.")] = 20,
+    manufacturer: ManufacturerOption = "amaco",
 ) -> None:
     """List the glaze products the sitemap exposes. Costs one request, no page fetches."""
 
     async def run() -> None:
-        adapter = AmacoAdapter()
+        adapter = adapter_for(manufacturer)
         shown = 0
         async for ref in adapter.discover():
             typer.echo(ref.external_id)
@@ -71,10 +75,11 @@ def crawl(
     slug: Annotated[list[str] | None, typer.Argument(help="Specific slugs, or all.")] = None,
     limit: Annotated[int, typer.Option(help="Cap products when crawling everything.")] = 5,
     dry_run: Annotated[bool, typer.Option(help="Skip the database entirely.")] = False,
+    manufacturer: ManufacturerOption = "amaco",
 ) -> None:
     """Fetch, parse and interpret. Honours the 10s crawl-delay, so budget ~10s per product."""
     settings = Settings()
-    adapter = AmacoAdapter()
+    adapter = adapter_for(manufacturer)
 
     async def run() -> None:
         refs: list[ProductRef]
@@ -98,7 +103,7 @@ def crawl(
                 fetcher = Fetcher(
                     client,
                     store,
-                    ManufacturerKey.AMACO,
+                    adapter.manufacturer,
                     adapter.politeness,
                     retention=settings.snapshot_retention,
                     max_attempts=settings.max_attempts,
@@ -121,7 +126,7 @@ def _store_for(conn: psycopg.Connection[tuple[object, ...]] | None) -> SnapshotS
     return InMemorySnapshotStore() if conn is None else PostgresSnapshotStore(conn)
 
 
-def _report(adapter: AmacoAdapter, snapshot: RawSnapshot) -> None:
+def _report(adapter: SourceAdapter, snapshot: RawSnapshot) -> None:
     """Print what the pure stages made of one page, so a bad parse is obvious by eye."""
     product = adapter.parse(snapshot)
     badges = product.badges
@@ -172,6 +177,7 @@ def _report(adapter: AmacoAdapter, snapshot: RawSnapshot) -> None:
 @app.command()
 def reparse(
     dry_run: Annotated[bool, typer.Option(help="Report only; write nothing.")] = True,
+    manufacturer: ManufacturerOption = "amaco",
 ) -> None:
     """Replay stored snapshots through the current grammar. No network.
 
@@ -179,18 +185,24 @@ def reparse(
     here, against ~50 minutes for a re-crawl at AMACO's mandated delay.
     """
     settings = Settings()
-    adapter = AmacoAdapter()
+    adapter = adapter_for(manufacturer)
     counts = {"high": 0, "medium": 0, "low": 0}
     products = 0
 
     with db_connect(settings.database_url) as conn:
         # Newest snapshot per URL only; older ones are history, not current truth.
+        # Scoped to the manufacturer, or a second source's pages would be replayed
+        # through this one's grammar.
         rows = conn.execute(
             """
-            select distinct on (url) url, fetched_at, http_status, etag, content_hash, body
-            from raw_snapshots
-            order by url, fetched_at desc
-            """
+            select distinct on (s.url)
+                   s.url, s.fetched_at, s.http_status, s.etag, s.content_hash, s.body
+            from raw_snapshots s
+            join manufacturers m on m.id = s.manufacturer_id
+            where m.key = %s
+            order by s.url, s.fetched_at desc
+            """,
+            (adapter.manufacturer.value,),
         ).fetchall()
 
     for url, fetched_at, status, etag, digest, body in rows:
@@ -264,6 +276,7 @@ def load(
     slug: Annotated[list[str] | None, typer.Argument(help="Specific slugs, or all stored.")] = None,
     images: Annotated[bool, typer.Option(help="Download and measure images.")] = True,
     blob_dir: Annotated[str, typer.Option(help="Where cached images go.")] = "./.blobs",
+    manufacturer: ManufacturerOption = "amaco",
 ) -> None:
     """Load stored snapshots into the catalog. No crawling — run `crawl` first.
 
@@ -271,7 +284,7 @@ def load(
     the whole corpus costs seconds, against ~50 minutes to re-crawl it.
     """
     settings = Settings()
-    adapter = AmacoAdapter()
+    adapter = adapter_for(manufacturer)
 
     async def run() -> None:
         with db_connect(settings.database_url) as conn:
@@ -279,20 +292,25 @@ def load(
             loader = Loader(conn, normalizer)
             namer = _color_namer(conn)
 
+            # Scoped to the manufacturer, or a second source's pages would be fed to
+            # this one's parser.
             query = """
-                select distinct on (url) url, fetched_at, http_status, etag, content_hash, body
-                from raw_snapshots
-                {where}
-                order by url, fetched_at desc
+                select distinct on (s.url)
+                       s.url, s.fetched_at, s.http_status, s.etag, s.content_hash, s.body
+                from raw_snapshots s
+                join manufacturers m on m.id = s.manufacturer_id
+                where m.key = %(manufacturer)s {extra}
+                order by s.url, s.fetched_at desc
             """
+            params: dict[str, object] = {"manufacturer": adapter.manufacturer.value}
             if slug:
                 # Must byte-match what the Fetcher stored, so build via the adapter.
-                patterns = [str(adapter.product_ref(s).url) for s in slug]
+                params["urls"] = [str(adapter.product_ref(s).url) for s in slug]
                 rows = conn.execute(
-                    query.format(where="where url = any(%s)"), (patterns,)
+                    query.format(extra="and s.url = any(%(urls)s)"), params
                 ).fetchall()
             else:
-                rows = conn.execute(query.format(where="")).fetchall()
+                rows = conn.execute(query.format(extra=""), params).fetchall()
 
             log.info("load.start", snapshots=len(rows), images=images)
 
@@ -344,6 +362,7 @@ def sync(
     limit: Annotated[int, typer.Option(help="Cap products. 0 = the whole catalog.")] = 0,
     images: Annotated[bool, typer.Option(help="Download and measure images.")] = True,
     blob_dir: Annotated[str, typer.Option(help="Local image cache.")] = "./.blobs",
+    manufacturer: ManufacturerOption = "amaco",
 ) -> None:
     """Crawl and ingest in one pass, touching only what changed. The command a cron runs.
 
@@ -355,7 +374,7 @@ def sync(
     scheduled path and the manual one cannot drift apart.
     """
     settings = Settings()
-    adapter = AmacoAdapter()
+    adapter = adapter_for(manufacturer)
 
     async def run() -> None:
         refs: list[ProductRef] = []
@@ -389,7 +408,7 @@ def sync(
                 fetcher = Fetcher(
                     client,
                     PostgresSnapshotStore(conn),
-                    ManufacturerKey.AMACO,
+                    adapter.manufacturer,
                     adapter.politeness,
                     retention=settings.snapshot_retention,
                     max_attempts=settings.max_attempts,

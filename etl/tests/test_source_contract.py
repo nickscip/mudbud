@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from glaze_etl.sources import adapter_for
 from glaze_etl.sources.amaco.adapter import AmacoAdapter
 
 CORE = Path(__file__).parent.parent / "glaze_etl" / "core"
@@ -22,6 +25,15 @@ def test_core_never_imports_sources() -> None:
         if "glaze_etl.sources" in line
     ]
     assert not offenders, f"core/ reaches into sources/: {offenders}"
+
+
+class TestRegistry:
+    def test_known_key_resolves(self) -> None:
+        assert isinstance(adapter_for("amaco"), AmacoAdapter)
+
+    def test_unknown_key_names_the_known_ones(self) -> None:
+        with pytest.raises(ValueError, match=r"'wedgwood'.*amaco"):
+            adapter_for("wedgwood")
 
 
 class TestUrlIdentity:
