@@ -1,4 +1,11 @@
-"""Parser and badge tests, run against every checked-in AMACO page."""
+"""AMACO-specific parser and badge assertions, per checked-in page.
+
+The source-agnostic half — every fixture page yields a code, a line, images and a
+price — lives in test_source_contract.py, parametrized over the registry, so a new
+source gets that coverage by adding fixtures rather than by copying tests. What stays
+here is irreducibly AMACO: exact codes and line names, its badge iconography, its
+sitemap shape.
+"""
 
 from __future__ import annotations
 
@@ -6,21 +13,13 @@ import re
 
 import pytest
 
-from glaze_etl.core.models import ManufacturerKey, Opacity
+from glaze_etl.core.models import Opacity
 from glaze_etl.sources.amaco.adapter import is_glaze_slug, parse_sitemap
 from glaze_etl.sources.amaco.parser import clean_text, parse_product, strip_cache_buster
-from tests.conftest import FIXTURES, all_product_slugs, snapshot_for
+from tests.conftest import all_product_slugs, fixture_dir, snapshot_for
 
 SLUGS = all_product_slugs()
-
-
-@pytest.mark.parametrize("slug", SLUGS)
-def test_every_page_yields_a_code_line_and_images(slug: str) -> None:
-    product = parse_product(snapshot_for(slug))
-    assert product.manufacturer is ManufacturerKey.AMACO
-    assert product.line_code, f"{slug} produced no line code"
-    assert product.images, f"{slug} produced no gallery images"
-    assert product.price_min is not None
+FIXTURES = fixture_dir("amaco")
 
 
 @pytest.mark.parametrize("slug", SLUGS)

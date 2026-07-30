@@ -11,8 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from glaze_etl.sources import adapter_for
+from glaze_etl.sources import SOURCES, adapter_for
 from glaze_etl.sources.amaco.adapter import AmacoAdapter
+from tests.conftest import all_product_slugs, snapshot_for
 
 CORE = Path(__file__).parent.parent / "glaze_etl" / "core"
 
@@ -25,6 +26,27 @@ def test_core_never_imports_sources() -> None:
         if "glaze_etl.sources" in line
     ]
     assert not offenders, f"core/ reaches into sources/: {offenders}"
+
+
+@pytest.mark.parametrize("source", sorted(key.value for key in SOURCES))
+def test_every_checked_in_page_parses_to_the_basics(source: str) -> None:
+    """The source-agnostic parse contract: code, line, gallery images, a price.
+
+    Parametrized over the registry and driven by `fixtures/<key>/product-*.html`, so a
+    new source is covered by checking in fixtures, not by copying this test. The
+    source-specific assertions (exact codes, badge iconography) live in that source's
+    own test module — test_amaco_parser.py sets the pattern.
+    """
+    adapter = adapter_for(source)
+    slugs = all_product_slugs(source)
+    assert slugs, f"no product fixtures for {source} — capture some before registering it"
+    for slug in slugs:
+        product = adapter.parse(snapshot_for(slug, source))
+        assert product.manufacturer is adapter.manufacturer
+        assert product.code, f"{source}/{slug} produced no code"
+        assert product.line_code, f"{source}/{slug} produced no line code"
+        assert product.images, f"{source}/{slug} produced no gallery images"
+        assert product.price_min is not None, f"{source}/{slug} produced no price"
 
 
 class TestRegistry:

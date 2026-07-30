@@ -22,7 +22,7 @@ from glaze_etl.core.composite_splitter import (
     split_coats_composite,
 )
 
-IMAGES = Path(__file__).parent / "fixtures" / "images"
+IMAGES = Path(__file__).parent / "fixtures" / "amaco" / "images"
 COMPOSITES = ["pc20-application-tiles", "pc30-application-tiles"]
 
 

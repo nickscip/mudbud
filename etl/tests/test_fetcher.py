@@ -258,11 +258,11 @@ class TestCanonicalHashing:
 
     @staticmethod
     def _bodies() -> tuple[str, str]:
-        from tests.conftest import FIXTURES
+        from tests.conftest import fixture_dir
 
         return (
-            (FIXTURES / "volatile-pcf-54-fetch-a.html").read_text(),
-            (FIXTURES / "volatile-pcf-54-fetch-b.html").read_text(),
+            (fixture_dir("amaco") / "volatile-pcf-54-fetch-a.html").read_text(),
+            (fixture_dir("amaco") / "volatile-pcf-54-fetch-b.html").read_text(),
         )
 
     def test_raw_bytes_really_do_differ(self) -> None:
