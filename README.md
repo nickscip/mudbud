@@ -53,8 +53,8 @@ Reanimated 4 + Moti (motion) · expo-haptics (tactile feel) · expo-image (blurh
 expo-image-picker / expo-video (media) · expo-sqlite + Drizzle ORM · Fraunces + Inter.
 
 The catalog behind the glaze screens is a separate Python 3.12 project in `etl/` (uv,
-Temporal, Postgres/Supabase), excluded from the Expo bundle — see
-[ARCHITECTURE.md](docs/ARCHITECTURE.md).
+httpx/selectolax, Postgres/Supabase), excluded from the Expo bundle and scheduled by a
+GitHub Actions cron — see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Design system lives in `src/theme/tokens.ts` and `tailwind.config.js`.
 

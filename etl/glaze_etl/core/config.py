@@ -1,7 +1,7 @@
 """Runtime configuration, read from the environment.
 
 Secrets never reach the repo. Local development points at the Supabase CLI's own Postgres;
-CI and the Temporal worker get the hosted values injected.
+CI and the scheduled sync get the hosted values injected from repo secrets.
 
 Variable names are set per field rather than by a shared prefix, because the two groups
 belong to different systems: everything Supabase owns is `SUPABASE_*`, and the pipeline's
@@ -81,13 +81,6 @@ class Settings(BaseSettings):
         alias="BLOB_DIR",
         description="Where images cache when no Supabase credentials are configured.",
     )
-
-    # ------------------------------------------------------------------------- Temporal
-    # 127.0.0.1, not "localhost": on this machine a Docker listener also holds *:7233 on
-    # IPv6, so resolving through localhost can land on the wrong process and fail with a
-    # broken pipe. Pinning IPv4 removes the ambiguity.
-    temporal_address: str = Field(default="127.0.0.1:7233", alias="TEMPORAL_ADDRESS")
-    temporal_namespace: str = Field(default="default", alias="TEMPORAL_NAMESPACE")
 
     def redacted(self) -> dict[str, str]:
         """For logging a run's configuration without leaking credentials."""

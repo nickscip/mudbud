@@ -1,8 +1,9 @@
-"""Command line entry point.
+"""Command line entry point, and the only way the pipeline runs.
 
-Steps 1-6 of the build deliberately run here rather than under Temporal: a pipeline that
-is still wrong is far easier to debug as a synchronous script than as a workflow. The
-Temporal activities added later call the same core classes, so nothing is rewritten.
+Every command is a synchronous script over the same `core/` classes: a pipeline that is
+still wrong is far easier to debug this way than through an orchestrator, and the
+scheduled path is this same `sync` command invoked by `.github/workflows/sync-catalog.yml`
+rather than a second implementation that can drift.
 """
 
 from __future__ import annotations
@@ -284,8 +285,8 @@ def sync(
     by hand, wasteful on a schedule. Here a product is parsed only if its fetch actually stored
     a new snapshot, so a steady-state week does ~350 conditional GETs and almost no work.
 
-    Deliberately mirrors SyncManufacturerWorkflow, and both call the same core functions, so the
-    scheduled path and the manual one cannot drift apart.
+    This is what `.github/workflows/sync-catalog.yml` invokes weekly, so the scheduled path
+    and the manual one cannot drift apart — there is only one of them.
     """
     settings = Settings()
     adapter = adapter_for(manufacturer)

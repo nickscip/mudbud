@@ -271,19 +271,23 @@ every way that matters to the pipeline:
 
 Landed as one branch, one commit per item. The end state is grep-provable and
 test-enforced: `glaze_etl/core/` never imports from `glaze_etl/sources/`
-(`tests/test_source_contract.py` scans for it), and `cli.py` / `activities/` /
-`workflows/` mention neither `AmacoAdapter` nor `shop.amaco.com`. A Mayco adapter is now
-one `sources/mayco/` package, one `SOURCES` entry, one `ManufacturerKey` member, and a
-fixtures directory — no core, CLI, activity, or workflow edits.
+(`tests/test_source_contract.py` scans for it), and `cli.py` mentions neither
+`AmacoAdapter` nor `shop.amaco.com`. A Mayco adapter is now one `sources/mayco/` package,
+one `SOURCES` entry, one `ManufacturerKey` member, and a fixtures directory — no core or
+CLI edits.
 
 A review pass on the same branch cleaned up what the seam work exposed. Worth knowing
 before the second source lands: every `raw_snapshots` query now lives in
 `core/store.py` (three modules had grown their own, and they had drifted on whether to
-scope by manufacturer — the ingest activity did not, so a mismatched key/URL pair would
-have parsed one source's HTML with another's parser); `adapter_for` raises an
-explanatory error rather than a `KeyError` for an enum member with no adapter, which is
-exactly the half-landed state F10 passes through; and a test asserts every
-`ManufacturerKey` member has one.
+scope by manufacturer — one of them did not, so a mismatched key/URL pair would have
+parsed one source's HTML with another's parser); `adapter_for` raises an explanatory
+error rather than a `KeyError` for an enum member with no adapter, which is exactly the
+half-landed state F10 passes through; and a test asserts every `ManufacturerKey` member
+has one.
+
+The Temporal worker, workflows and activities this epic also de-AMACO-ed were deleted
+straight afterwards — they had never run in production, and G2's cron calls the CLI. So
+the "no edits" claim above is now over a smaller surface than the branch itself touched.
 
 - **F1 · `core/loader.py` imported an AMACO module** — **done**. The category-to-cone-range
   mapping is `SourceAdapter.cone_range_for_category` (default `None`); the pipeline
@@ -299,10 +303,9 @@ exactly the half-landed state F10 passes through; and a test asserts every
   parser — both queries now scope by manufacturer key.
 - **F4 · Product URLs were built from an AMACO template** — **done**.
   `product_ref(slug)` and `external_id_for(url)` are abstract on the adapter. This also
-  killed a real divergence: the sync workflow derived external ids as the URL's last path
-  segment while the adapter used the whole path — identical for AMACO, wrong for Mayco's
-  `/product/<slug>/`. `FetchInput` no longer carries `external_id`; the fetch activity
-  derives it through the adapter.
+  killed a real divergence: the since-deleted sync workflow derived external ids as the
+  URL's last path segment while the adapter used the whole path — identical for AMACO,
+  wrong for Mayco's `/product/<slug>/`. Only the adapter derives them now.
 - **F5 · Coat ordering assumed AMACO's layout** — **done**, the minimal way.
   `coat_order` is an adapter attribute (empty default = source never emits composites),
   and the pipeline fails loudly if regions arrive without one. The splitter's
@@ -412,9 +415,11 @@ Ordered roughly by what unblocks what — G1 gates everything.
 - **G2 · Point the sync at the hosted project** — **todo**, mostly config. The workflow
   already exists: `.github/workflows/sync-catalog.yml` runs weekly (Monday 09:00 UTC) plus
   `workflow_dispatch`, and reads `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_DB_URL`
-  from repo secrets. Its header comment records that Temporal is deliberately not used for
-  a weekly cron. So "deploy the ETL" is largely done — it needs real secrets and a first
-  verified remote run.
+  from repo secrets. Its header comment records why a workflow engine is not used for a weekly
+  cron, and the Temporal code it once ran under is gone — deleted rather than kept warm, since
+  the two shapes meant to bring it back (parallel manufacturers, a review gate) are a
+  `strategy.matrix` and an `environment:` here. So "deploy the ETL" is largely done — it needs
+  real secrets and a first verified remote run.
 - **G3 · Remote dev loop** — **todo**, cheap, needs G1. `expo start --tunnel` plus Expo Go
   on the phone works off-network today; note that `EXPO_PUBLIC_*` values are baked into
   the bundle at build time, so switching between local and hosted Supabase is a restart,

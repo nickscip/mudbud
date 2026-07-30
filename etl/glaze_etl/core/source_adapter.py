@@ -51,7 +51,8 @@ class SourceAdapter(ABC):
     def parse(self, snap: RawSnapshot) -> ParsedProduct:
         """Turn stored HTML into facts. Pure: no network, no clock, no database.
 
-        Purity is what lets ReparseWorkflow replay the entire corpus in seconds.
+        Purity is what lets `load` replay the entire stored corpus in seconds, with no
+        network and no re-crawl — the reason `raw_snapshots` is kept at all.
         """
 
     @abstractmethod
