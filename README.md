@@ -36,8 +36,11 @@ And the glaze half:
 
 - **Glaze search** (`src/app/glazes/index.tsx`) — search by name, code or colour word,
   filtered by cone, food safety, and your own wishlist / owned / favourites.
+- **Your glazes** (`src/app/glazes/lists.tsx`) — wishlist, owned and favourites as their own
+  destination. Membership is local, so the lists still read with no signal.
 - **Glaze detail** (`src/app/glazes/[manufacturer]/[code].tsx`) — how the glaze actually
-  fires: coat thickness thin → thick, on different clay bodies, layered over others.
+  fires: coat thickness thin → thick, on different clay bodies, layered over others, plus a
+  private note once you own it.
 
 Your pieces are stored **locally** (SQLite + on-disk media) — no account, and they never
 leave the device. The glaze catalog is the one thing read over the network, and the app

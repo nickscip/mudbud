@@ -122,11 +122,15 @@ owned.
   so a large collection is never truncated; order is local (`updated_at` desc), and a mark
   whose catalog row is unreachable degrades to its denormalized name instead of vanishing.
 - **C4 · Private notes on owned glazes** — **done**, as one `note` column on `glaze_marks`
-  (decision resolved below): device schema v2, appended by `ALTER` for v1 devices and
-  carried by the v0 rebuild. `setGlazeMarkNote` enforces owned-only in the repo the way
-  favourite is; demotion to the wishlist *keeps* the note (a note is authored data, a heart
-  is a flag) and only clearing the mark deletes it, behind a confirm. The field autosaves
-  under the mark toggles on the detail screen.
+  (decision resolved below): device schema v2, appended by `ALTER` for v1 devices and carried
+  by the v1 rebuild for older ones. Columns added from here on go last in
+  `GLAZE_MARKS_COLUMNS`, because `ALTER` can only append and the two install paths are asserted
+  to produce the same column order. The field autosaves under the mark toggles and is offered
+  only while owned; demotion to the wishlist *keeps* the note (a note is authored data, a heart
+  is a flag) and only clearing the mark deletes it, behind a confirm. `setGlazeMarkNote` guards
+  on the row existing rather than on it being owned — the debounce means a save can land after
+  the mark has moved, and refusing it there lost text the model says is kept, while a save after
+  the mark is *cleared* still no-ops because the row is gone.
 - **C5 · Publish a note** — **blocked** by E1/E2/E3. Private-by-default with an explicit
   opt-in per note. Ties into D7.
 
@@ -450,7 +454,14 @@ Ordered roughly by what unblocks what — G1 gates everything.
     public repo, so a red run does not block a merge.
   CI's Postgres is pinned to 17 to match the Supabase stack — server versions disagree about
   catalog output, which already bit one assertion.
-  Still to add: whatever build or release automation G4–G8 settle on.
+  Still to add: whatever build or release automation G4–G8 settle on, and a way to test
+  `src/db/repo.ts`. That last one is a real gap rather than a wish — `test-device-db.mjs` runs
+  DDL strings against `node:sqlite`, so it proves the upgrade path and nothing about the repo
+  functions above it, which is how C4 shipped a review round with a note-losing guard in
+  `setGlazeMarkNote`. The invariants worth asserting are all in one file: favourite only on
+  owned, notes only on a row that exists, whitespace stored as NULL, and demotion keeping the
+  note. Needs a Drizzle-over-`node:sqlite` harness or an equivalent, since the repo imports
+  expo-sqlite.
 
 ## Epic H — Mud Bud, and the style layer
 
