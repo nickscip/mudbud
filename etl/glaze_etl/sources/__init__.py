@@ -13,9 +13,11 @@ from collections.abc import Callable
 from glaze_etl.core.models import ManufacturerKey
 from glaze_etl.core.source_adapter import SourceAdapter
 from glaze_etl.sources.amaco.adapter import AmacoAdapter
+from glaze_etl.sources.mayco.adapter import MaycoAdapter
 
 SOURCES: dict[ManufacturerKey, Callable[[], SourceAdapter]] = {
     ManufacturerKey.AMACO: AmacoAdapter,
+    ManufacturerKey.MAYCO: MaycoAdapter,
 }
 
 

@@ -25,6 +25,7 @@ class Frozen(BaseModel):
 
 class ManufacturerKey(StrEnum):
     AMACO = "amaco"
+    MAYCO = "mayco"
 
 
 class Confidence(StrEnum):
