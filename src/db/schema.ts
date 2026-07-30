@@ -68,6 +68,8 @@ export const glazeMarks = sqliteTable(
     favorite: integer("favorite", { mode: "boolean" }).notNull().default(false),
     /** Denormalized so the shelf can list marked glazes without reaching the network. */
     name: text("name"),
+    /** One private note per glaze, only meaningful while owned. Stays on this device. */
+    note: text("note"),
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [primaryKey({ columns: [table.manufacturer, table.code] })]
