@@ -15,16 +15,10 @@ Facts to keep in mind while reading:
   and Mayco (**630** glaze products discoverable, verified by parsing the whole captured
   corpus). Brand-shaped work is no longer a no-op — A7's facet discriminates and D6's
   cross-brand similars light up.
-  **Neither database holds all of it yet.** AMACO is loaded on the hosted project; Mayco is
-  loaded *only locally and only partially* — 107 glazes across 8 of its 25 lines, enough to
-  prove the pipeline end to end but not the catalog. Nobody has run a full Mayco pass
-  anywhere, so the `mayco` floor in `data_quality.sql` will fire until one completes. The
-  first is a `sync-catalog` dispatch after `deploy-schema.yml` applies
-  `20260730000100`/`20260730000200`; budget ~1.75 hours for the Mayco leg.
-  Worth knowing about that gap: correctness was established by replaying all 630 products
-  through the parser offline (zero parse failures, zero unknown attributes, zero unmapped
-  cone categories, 630 distinct codes) rather than by a full crawl. The full crawl is an
-  endurance and floor check, not the correctness evidence.
+  Correctness was established by replaying all 630 products through the parser offline —
+  zero parse failures, zero unknown attributes, zero unmapped cone categories, 630 distinct
+  codes — rather than by the crawl. The crawl proves endurance and clears the floors; it is
+  not the correctness evidence.
 
   **The full hosted load is done** (2026-07-30): 630 Mayco glazes beside AMACO's 352, so
   the catalog is 982 glazes and 4148 appearances. All 25 lines resolved, 620 of 630 carry a
@@ -38,8 +32,9 @@ Facts to keep in mind while reading:
   the command line for local work. This is worth knowing before the first run, not after.
 - The Expo app is **SDK 54 + Expo Go, no dev client** (`AGENTS.md`). Any item needing a
   new native package is a spike first, not a build. G7 may reopen that constraint.
-- The app talks to a **local** Supabase (`127.0.0.1:54321`), so nothing works off this
-  machine until G1.
+- The app points at the **hosted** Supabase (`.env.local`), which is the only project there
+  is — there is no dev/prod split yet, and G1 defers that decision to G4/G6. So a phone can
+  reach the backend, and a careless local ETL run reaches production (see above).
 - **`search_glazes` is further ahead than the UI.** It already accepts manufacturer, line,
   surface, opacity, cone range, food safe, clay body, codes (paired with their manufacturers),
   limit and offset (`supabase/migrations/20260728000100_manufacturer_scoped_identity.sql`). The
