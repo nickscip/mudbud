@@ -404,6 +404,13 @@ class TestGrammar:
             ("SW214.jpg", ImageRole.LABEL_CHIP, "SW-214", None, None),
             ("sw214_cone10.jpg", ImageRole.LABEL_CHIP, "SW-214", None, "10"),
             ("ug-236_cone6.jpg", ImageRole.LABEL_CHIP, "UG-236", None, "6"),
+            # One-letter prefix. 21 fired SKUs have one — the whole S-27xx Jungle Gems block
+            # and C-300 — and requiring two letters classified every one of their swatches as
+            # OTHER, because no code matched at all. data_quality.sql caught it on the first
+            # real load; this is the cheaper place to catch it again.
+            ("s-2712.jpg", ImageRole.LABEL_CHIP, "S-2712", None, None),
+            ("s-2712_cone6.jpg", ImageRole.LABEL_CHIP, "S-2712", None, "6"),
+            ("c-300_cone06.jpg", ImageRole.LABEL_CHIP, "C-300", None, "06"),
             # `over` between exactly two codes is the one shape that resolves to a pair.
             ("sw250_over_sw401_cone6.jpg", ImageRole.LAYERED, "SW-250", "SW-401", "6"),
             # The cone sometimes sits inside the gap. Four filenames do this, and all four

@@ -11,8 +11,15 @@ reads the catalog over the anon key and **never writes to it**.
 
 Facts to keep in mind while reading:
 
-- The catalog is **one manufacturer** (AMACO, 352 glazes, 1237 appearances). Anything
-  brand-shaped is a no-op until Epic F lands.
+- The catalog is **two manufacturers** as of F10–F14: AMACO (352 glazes, 1237 appearances)
+  and Mayco (630 glaze products discoverable). Brand-shaped work is no longer a no-op —
+  A7's facet discriminates and D6's cross-brand similars light up — but note the two are
+  loaded to different places: AMACO is on the hosted project, Mayco has only been loaded
+  locally. The hosted load is a `sync-catalog` dispatch after `deploy-schema.yml` applies
+  `20260730000100`/`20260730000200`.
+- **`etl/.env` points `SUPABASE_DB_URL` at the hosted project, not at the local stack.** So
+  a bare `glaze-etl sync` writes to production. Override the three `SUPABASE_*` variables on
+  the command line for local work. This is worth knowing before the first run, not after.
 - The Expo app is **SDK 54 + Expo Go, no dev client** (`AGENTS.md`). Any item needing a
   new native package is a spike first, not a build. G7 may reopen that constraint.
 - The app talks to a **local** Supabase (`127.0.0.1:54321`), so nothing works off this
@@ -67,8 +74,11 @@ today they share one text box and four chips.
   wholesale and needs an accumulate mode, and its effect keys on the `filters` object
   identity — page state has to stay memoized or every page fetch re-fires the debounce.
   Every facet added to A4 makes the invisible cap more misleading.
-- **A7 · Brand facet** — **blocked** by Epic F. `p_manufacturer` and `manufacturer_key` are
-  both ready; cardinality is 1. A brand chip today filters nothing.
+- **A7 · Brand facet** — **unblocked, still todo.** Epic F landed the second manufacturer,
+  so cardinality is no longer 1 and a brand chip finally discriminates. `p_manufacturer` and
+  `manufacturer_key` were always ready; what is new is that `glaze_hit` now also carries
+  `manufacturer_name`, so the chip can be labelled with the brand's own name rather than an
+  uppercased key. Client wiring only.
 - **A8 · Coat / application filters in search** — **blocked** by E4 (splitter).
 - **A9 · The `glaze_hit` projection is written twice** — **todo**, small, and cheaper than it
   used to be. `search_glazes` and `glaze_by_code` repeat the same 24-column select list and the
@@ -183,7 +193,10 @@ epic is filling the tabs out (D3–D7).
   exposes `doc_cat` / `doc_tag` taxonomies, so technical documents may be reachable —
   but an SDS lists hazardous components, not a recipe, so at best this becomes "safety
   data and a link out". Needs a sourcing decision before it is a ticket.
-- **D6 · Similar glazes tab** — **done** (`20260729000300_similar_glazes.sql`, live on the
+- **D6 · Similar glazes tab** — **done, and the cross-brand payoff is now real** rather than
+  anticipated: with Mayco loaded, "the Mayco equivalent of PC-20" returns rows, because
+  results were deliberately never scoped to the anchor's brand.
+  (`20260729000300_similar_glazes.sql`, live on the
   hosted project the same day). An integer score over `color_terms` overlap (×3) plus same
   surface (+2), opacity (+2) and line (+1); `hero_hex` distance was deliberately dropped —
   RGB-Euclidean ranks perceptually unlike colours as close, the thing `glazy` got wrong,
@@ -242,30 +255,56 @@ Mayco is **WordPress + WooCommerce + Yoast**, which differs from AMACO's BigComm
 every way that matters to the pipeline:
 
 - `robots.txt` **permits crawling and declares no `Crawl-delay`** (the Yoast block is an
-  empty `Disallow:`). Nothing is mandated, so we pick our own delay — see F14.
+  empty `Disallow:`, and `/wp-json/` is not listed). Nothing is mandated, so we pick our
+  own delay — see F14.
 - `sitemap_index.xml` fans out to per-type sitemaps, and **every entry carries `lastmod`**.
   This is the delta signal AMACO does not have, so `discover(since=…)` becomes real rather
   than vestigial.
-- `product-sitemap.xml` holds 1001 URLs with a second page beyond it, so >1000 products.
-  Pattern is `/product/<slug>/`, e.g. `/product/sw-149-crackle-white/`. Non-glaze SKUs are
-  definitely in there — chip charts like `XA-190…` turned up immediately — and by analogy
-  with AMACO (~300 glazes out of 954 products) they are probably the majority, though the
-  Mayco ratio has not been counted. Either way the same non-glaze filter problem applies
-  with different markers.
-- **No `"@type":"Product"` JSON-LD** on the product page sampled — only `WebPage`,
-  `BreadcrumbList`, `ImageObject`, `WebSite`. AMACO's parser leans on clean JSON-LD
-  `Product`; Mayco needs WooCommerce DOM extraction instead.
-- Properties come as a **text attributes table**, not icon images:
-  `.woocommerce-product-attributes` with `attribute_food-safe`,
-  `attribute_dinnerware-safe`, `country-of-origin`, size and weight. Strictly better than
-  AMACO's `opaque-icon-web.png` situation. The site also exposes
-  `pa_dinnerware-safe-sitemap.xml`, so those attributes are real taxonomies.
-- Gallery container is `.woocommerce-product-gallery__wrapper`. The AMACO lesson transfers
-  verbatim: read images from the gallery container only, never every `<img>`, or
-  related-product carousels end up in the catalog.
+- `product-sitemap.xml` holds 1001 URLs with a second page beyond it — **1055 products**,
+  and every entry also carries an `<image:loc>`. Pattern is `/product/<slug>/`.
 - Extra content types worth mining: `glazecombo-sitemap*.xml` ×4 (F15),
-  `project-sitemap*.xml` ×3 and `color_swatch-sitemap*.xml` ×2 (F16),
-  plus `product_line`, `fire_temp` / `firing_temp` taxonomies for vocabulary seeding.
+  `project-sitemap*.xml` ×3 and `color_swatch-sitemap*.xml` ×2 (F16).
+
+**Four claims in the first pass of this section were wrong, and the second pass
+(2026-07-30, measured against all 651 fired products) replaced them.** Recorded as
+corrections rather than quietly edited, because each one had a design decision resting on
+it:
+
+- **There is a public WooCommerce Store API.** `/wp-json/wc/store/v1/products` answers 200
+  with no auth and returns `sku`, `name`, `slug`, `permalink`, `short_description`,
+  `description`, `categories`, `images` (with `alt`), `attributes` and `prices`. The first
+  pass concluded "no `"@type":"Product"` JSON-LD, so DOM extraction" — true about the page,
+  but it never probed `/wp-json/`. The adapter reads the API: a versioned contract, an
+  authoritative SKU, and no theme fragility. `?slug=<slug>` returns one product, which is
+  what each snapshot holds.
+- **The attribute table is not "strictly better than AMACO's icon situation" — it is the
+  same problem plus a second spelling.** The same fact arrives as an icon URL
+  (`…/toxicology/not-dinnerware-safe.png`, 338 products), as plain prose
+  (`Not Dinnerware Safe`, 25), and once as a raw `<img src=…>` tag. Only two of the six
+  attribute names carry anything filterable (`Dinnerware Safe`, `Food Safe`); the other four
+  are recognized-and-ignored, which they have to be explicitly or every glaze files three
+  parse issues.
+- **Non-glaze products are filtered by category, not by slug shape.** `color/fired` (term
+  id 98) holds 651 products; excluding the 21 in `product-kits` leaves **630 glazes** out of
+  1055. Slug-prefix filtering — AMACO's only option — would have been wrong here: the code
+  prefix is not the line (`SG` spans Designer Liner, Snow Gems and Cobblestone; `SW` spans
+  seven lines), 89 SKUs omit the separator, and `EZ112`'s slug is literally `lilac`.
+- **Prices are integers in the currency's minor unit.** `"695"` with
+  `currency_minor_unit: 2` is $6.95, and 398 products carry a `price_range` whose spread the
+  flat `price` understates. 15 are `"0"` and mean "unpriced", not free.
+
+Three more things the second pass established, which the pipeline now depends on:
+
+- **All 651 fired slugs appear in the product sitemaps** (verified, none missing). That is
+  what makes the hybrid discovery in F11 sound.
+- **Mayco writes real image alt text**, which AMACO does not — AMACO's captions are burned
+  into the pixels, which is the entire reason a composite splitter that reads images exists.
+  Alt text is a second evidence channel: `"1, 2, 3, 4 coats, cone 6 oxidation"`,
+  `"White Clay, cone 6 oxidation"`.
+- **Filenames are richer than AMACO's.** Across 2878 images: 2325 carry their own product's
+  code, `cone6`/`cone10`/`cone5` make cone the best-attested fact, and **`_under_` (186) is
+  more common than `_over_` (119)** — Mayco photographs a glaze beneath another as readily
+  as on top of one, a direction AMACO never records.
 
 ### De-AMACO-ing — real coupling, not just comments
 
@@ -336,15 +375,32 @@ the "no edits" claim above is now over a smaller surface than the branch itself 
   Proven rather than asserted: `supabase/tests/search_smoke.sql` loads a second manufacturer
   with a colliding `PC-20` and asserts each lookup answers for the brand asked about. The
   fixture is keyed `testco`, not `mayco`, so F10's real Mayco row cannot collide with it.
-- **F8 · Vocabulary scoping** — **todo**. `clay_bodies` is already seeded per manufacturer
-  (`20260726000100_vocabularies.sql:98`), which is the right pattern. `coat_levels` is not:
-  it is global, its keys are AMACO's caption words (`light`, `slightly_light`,
-  `slightly_heavy`, `heavy`), and `ordinal` is `not null unique` — so Mayco's "1 coat / 2
-  coats / 3 coats" cannot be inserted at all without either taking an ordinal AMACO is not
-  using — semantically wrong, since ordinal means position on one scale — or dropping the
-  unique constraint. Migrations are append-only, so this is a new migration either way.
-  Decide whether coat level is per-manufacturer or a shared abstract scale with per-source
-  labels.
+- **F8 · Vocabulary scoping** — **todo, and no longer hypothetical.** `clay_bodies` is
+  already seeded per manufacturer (`20260726000100_vocabularies.sql:98`), which is the right
+  pattern. `coat_levels` is not: it is global, its keys are AMACO's caption words (`light`,
+  `slightly_light`, `slightly_heavy`, `heavy`), and `ordinal` is `not null unique`.
+  Migrations are append-only, so this is a new migration either way.
+  What the Mayco pass measured, which the decision now has to answer to:
+  - Mayco's composites hold **four** tiles, not three, captioned by brush-coat *count*:
+    `sw214_1234coats_cone6_web.jpg`, alt `"1, 2, 3, 4 coats, cone 6 oxidation"`. AMACO also
+    has four `CoatLevel` members but its splitter refuses anything that is not exactly
+    three, so `HEAVY` is never emitted.
+  - So the counts are 1–4 and the thicknesses are light→heavy. Whether those are one axis
+    with different labels or two axes is still the open question, but it is now a question
+    about real data on both sides rather than a hypothesis about Mayco.
+  - Meanwhile `MaycoAdapter.coat_order` is empty and the grammar never classifies an image
+    as `COATS_COMPOSITE`, so nothing splits and nothing is lost: those images still become
+    appearances, whole, with the count kept in `evidence["coats_unsplit"]` so the decision
+    has data when it is made.
+- **F8a · `Vocabularies.clay_bodies` is not manufacturer-scoped** — **todo, latent.** The
+  table is scoped correctly; the *lookup* is not. `Vocabularies.clay_bodies` is a flat
+  `dict[str, int]` of code→id loaded across every manufacturer (`core/normalizer.py:33`),
+  so two brands using the same clay code would resolve to whichever row loaded. Dormant
+  today only because Mayco sets `clay_body_number=None` — it names its clays ("White Clay",
+  "Speckled Clay") rather than numbering them, and `ImageFacts.clay_body_number` is an
+  integer keyed on AMACO's numbered clays. This is the same class of bug as F2 and F3, and
+  fixing it is the prerequisite for Mayco's clay-body alt text feeding D3's
+  on-different-clays rail — which is real evidence currently being dropped.
 - **F9 · Tests and fixtures were single-source shaped** — **done**, except the part that
   needs Mayco to exist. `tests/fixtures/<key>/` mirrors the registry (the AMACO images
   moved under `fixtures/amaco/images/`), conftest's helpers take a source parameter and
@@ -357,29 +413,46 @@ the "no edits" claim above is now over a smaller surface than the branch itself 
 
 ### The Mayco adapter
 
-- **F10 · Manufacturer identity plumbing** — **todo**. `ManufacturerKey` has exactly one
-  member (`core/models.py:27`); add `MAYCO`. Add the `manufacturers` row by migration
-  (mirroring `20260726000100_vocabularies.sql:49`). The detail screen's attribution card is
-  no longer hardcoded — it derives from `manufacturer_key` (uppercased) and the
-  `product_url` host — but that spelling trick only works for AMACO, and
-  `"Photograph © AMACO"` is still the credit fallback at
-  `src/components/ImageViewer.tsx:88`. `GlazeHit` carries `manufacturer_key` but no display
-  name or site URL, so the RPCs still need to return them.
-- **F11 · Discovery** — **todo**. Sitemap index → `product-sitemap*.xml`, honouring
-  `lastmod` for `since`. Needs a non-glaze filter (chip charts, tools, kits) and a decision
-  on whether to also enumerate `product_cat` / `product_line` for line assignment.
-- **F12 · Parse** — **todo**. WooCommerce DOM rather than JSON-LD `Product`: name and code
-  from title/slug, price from Woo price markup, properties from the attributes table,
-  cone from `fire_temp` / breadcrumbs, images from the gallery wrapper only. Same purity
-  rule as AMACO — no network, no clock, no database — so reparse stays a seconds-long
-  replay.
-- **F13 · Filename / caption grammar** — **todo**. Mayco's own conventions, including
-  zero-padding to three digits (`sw-001`) where AMACO is inconsistent (`C-5` vs `C-05`,
-  handled at `src/components/GlazeCard.tsx:104`). Code display normalisation is per-source
-  and should not be a shared regex.
-- **F14 · Politeness** — **decision + todo**. Nothing is mandated by `robots.txt`, so pick
-  a conservative self-imposed delay and set it in `Politeness` on the adapter. >1000
-  products means the delay choice decides whether a full pass is 20 minutes or 3 hours.
+- **F10 · Manufacturer identity plumbing** — **done**, and the premise was wrong in a
+  useful way: **`manufacturers` already had `name` and `site_url`**
+  (`20260726000100_vocabularies.sql:39-46`). Nothing needed adding to the table; the columns
+  simply never reached the client. So the work was the `mayco` row
+  (`20260730000100`) plus widening the `glaze_hit` composite with `manufacturer_name` and
+  `manufacturer_site_url` (`20260730000200`) — a drop-and-recreate of all three functions
+  returning it, since a composite type cannot gain an attribute in place. The columns are
+  appended after `rank` because the type is positional. `manufacturerLabel` is deleted, and
+  the `"Photograph © AMACO"` fallback is now `photographCredit(manufacturer_name)`, applied
+  on the single seam the hero and all three rails already share. That fallback turned out
+  not to be an edge case: no adapter sets `glaze_images.credit`, so it is what every image
+  shows.
+- **F11 · Discovery** — **done**, hybrid, because neither source is sufficient alone. The
+  Store API's `?category=98` filter is the only exact glaze filter Mayco offers but its
+  payload carries no modified date; the Yoast sitemap carries `lastmod` on every entry but
+  says nothing about what a product is. So the API supplies the allowlist (7 requests) and
+  the sitemap supplies the timestamps (2). Verified first that all 651 fired slugs appear
+  in the sitemaps, so nothing is lost by taking URLs from there. `discover(since=…)` honours
+  the parameter and is finally able to prune — **but no caller passes one.** Threading
+  `--since` through the CLI needs a "when did we last sync" source of truth, which is an
+  Epic G concern; deferred deliberately, not forgotten.
+- **F12 · Parse** — **done**, from the Store API rather than the DOM (see the corrections
+  above). `code` from `sku`, line and cone-category from the `fired`-child category, price
+  from `prices` with the minor-unit division, badges from the attribute table, images from
+  `images[].src`. Same purity rule as AMACO — no network, clock or database — so reparse
+  stays a seconds-long replay over stored JSON.
+- **F13 · Filename / caption grammar** — **done**. `normalize_code` inserts the separator
+  and **keeps** Mayco's three-digit padding, the opposite of AMACO's normalizer, which
+  strips leading zeros — Mayco pads deliberately and consistently, so the padding is its
+  spelling. Normalizing is what makes layering resolvable: filenames disagree with their own
+  SKU's separator 744 times out of 2368, and `link_layering` matches `glazes.code` exactly,
+  so normalizing both sides lifted matches from 1624 to 2401 with no collisions (630
+  products, 630 distinct codes). `_under_` inverts the pair rather than being read as
+  `over`. `stripCode` (`src/components/GlazeCard.tsx`) now also strips an unseparated prefix
+  and escapes the prefix before interpolating it.
+- **F14 · Politeness** — **decided: 10s, self-imposed.** Nothing is mandated, so the delay
+  mirrors what AMACO's `robots.txt` asks for, on the grounds that a site which has not
+  stated its budget should not be treated more roughly than one that has. At 630 glazes
+  (not the >1000 products first estimated) a full pass is ~1.75 hours, which the weekly cron
+  absorbs. It is the only lever — the Fetcher is strictly serial.
 - **F15 · Combos as sourced data** — **todo**, and the most interesting item here.
   `glazecombo` is a Mayco content type with four sitemaps. If those pages name their
   component glazes, D4 stops being filename inference. Verify shape before scoping;
@@ -563,9 +636,21 @@ Kept separate so nobody picks up a UI ticket and discovers the well is dry.
   pages may change this (F15); shape unverified.
 - **Coat thickness for most glazes** — columns exist, extraction incomplete (E4).
 - **Any popularity or usage signal** — no accounts, no telemetry, marks are local.
-- **Manufacturer display name and site URL in the app** — `manufacturer_key` only, which is
-  why attribution is currently hardcoded (F10).
-- **Brands other than AMACO** — one manufacturer loaded, until Epic F.
+- ~~**Manufacturer display name and site URL in the app**~~ — done with F10: `glaze_hit`
+  carries `manufacturer_name` and `manufacturer_site_url`, and the columns were already on
+  the table.
+- **Kiln atmosphere** — *newly identified, and this one is data we have and cannot store.*
+  Mayco states it in filenames and alt text (`reduction` in 92 filenames, `soda` in 48,
+  `oxidation` throughout), and it changes how a glaze looks more than most axes we do model.
+  There is no field on `ImageFacts` and no column on `appearances`. The grammar reports it as
+  an unmatched token so it shows up rather than vanishing.
+- **Clay body by name** — same shape of gap. Mayco's alt text says "White Clay, cone 6
+  oxidation"; `ImageFacts.clay_body_number` is an integer keyed on AMACO's numbered clays,
+  and the lookup is not manufacturer-scoped (F8a). So D3's on-different-clays rail has Mayco
+  evidence available and unused.
+- **Photograph credit, for anyone** — `glaze_images.credit` exists and no adapter has ever
+  set it: AMACO burns the photographer's name into the image, and Mayco publishes none. The
+  app shows `Photograph © <brand>` for every image because that is all there is.
 
 ## Open decisions
 
@@ -582,10 +667,16 @@ Kept separate so nobody picks up a UI ticket and discovers the well is dry.
   does E1 sync them? The current design is deliberately local; syncing is a real reversal.
 - **Sponsorship** — is a paid featured slot actually wanted at this stage, and what does a
   sponsor buy: slot, ordering, or a badge?
-- **Coat level: per-manufacturer or shared scale?** (F8) AMACO photographs thickness;
-  Mayco counts brush coats. Are those the same axis with different labels or two axes?
-- **Mayco crawl delay** (F14) — nothing is mandated; what do we impose on ourselves for a
-  1000+ product site?
+- **Coat level: per-manufacturer or shared scale?** (F8) AMACO photographs thickness in
+  three tiles labelled light→heavy; Mayco counts brush coats in four, labelled 1–4. Both
+  sides of the question are now measured data rather than one measurement and one guess.
+- ~~**Mayco crawl delay** (F14)~~ — decided: 10s self-imposed, mirroring AMACO's declared
+  budget. ~1.75 hours for a full 630-glaze pass.
+- **Where does kiln atmosphere live?** Newly raised by the Mayco pass. Reduction, soda and
+  oxidation are stated per photograph and change appearance substantially, and there is
+  nowhere to put them — a column on `appearances` and a field on `ImageFacts`, or a
+  deliberate decision not to model it. Currently reported as unresolved on every affected
+  image, which is honest but is not a home.
 - **Cross-brand combos** — sourced combos are within one brand. Mixing brands is
   user-generated, which puts it behind E1–E3.
 - **Beta platform scope** (G6/G7) — iOS TestFlight only, or Android too?
@@ -609,9 +700,13 @@ Not a commitment, just the dependency-respecting reading of the above.
    shell, the pairs rail as its own tab, and the Similar tab.
 4. ~~**The saving rework end to end** — C3 and C4 are what remain; C1 and C2 landed with
    F7.~~ — **done**: Epic C is now C5 (publish, blocked by E1–E3) and nothing else.
-5. **Epic F proper** — ~~F1–F9 de-AMACO-ing~~ (done, minus the F8 decision), then F10–F14
-   for the adapter, then F15 combos. The abstraction is only proven once a second adapter
-   runs through it, so do not treat the cleanup as finished before Mayco loads.
+5. ~~**Epic F proper** — F1–F9 de-AMACO-ing, then F10–F14 for the adapter, then F15
+   combos.~~ — **F1–F14 done.** The seam held: the Mayco adapter is one `sources/mayco/`
+   package, one `SOURCES` entry, one enum member and two migrations, with no edit to `core/`
+   or `cli.py`. What the second source cost outside its own package was three things, all of
+   them the seam being *tested* rather than the seam being wrong: `conftest` learned that a
+   stored body need not be HTML, `glaze_hit` gained two columns, and the app stopped
+   spelling brands by uppercasing a key. What remains in the epic is F8 (+F8a) and F15/F16.
 6. **Search depth** — A3, A4's wiring half, A5, A6. Mostly client work over parameters the
    RPC already accepts; A7's brand facet becomes real the moment F lands.
 7. **Explore, partially** — B3 new, B4 shell. Featured and popular wait.

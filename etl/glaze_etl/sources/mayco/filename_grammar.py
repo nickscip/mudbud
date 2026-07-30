@@ -33,9 +33,19 @@ from glaze_etl.sources.mayco.vocabulary import (
     NOISE_WORDS,
 )
 
-_CODE_RE = re.compile(r"(?<![a-z0-9])([a-z]{2,3})-?(\d{1,4})(?![0-9])")
+_CODE_RE = re.compile(r"(?<![a-z0-9])([a-z]{1,3})-?(\d{1,4})(?![0-9])")
 """A glaze code as it appears in a filename. Mayco writes the same code both ways —
-`sw214_...` and `sw-214_...` — so the separator is optional here and normalized away."""
+`sw214_...` and `sw-214_...` — so the separator is optional here and normalized away.
+
+**One letter, not two.** 21 fired SKUs have a single-letter prefix — the whole `S-27xx` Jungle
+Gems block, plus `C-300` — and requiring two silently classified every one of their swatches
+as `OTHER` instead of `LABEL_CHIP`, because no code matched at all. Caught by
+`data_quality.sql`'s "a high-confidence appearance must say something" assertion on the first
+real load, which is the check earning its keep.
+
+Widening is measured, not hopeful: across all 2878 corpus images it gains 43 matches against
+real SKUs and adds **zero** new non-matching tokens. The lookbehind is what makes that safe —
+a single letter only counts when nothing alphanumeric precedes it."""
 
 _CONE_RE = re.compile(r"(?<![a-z0-9])cone[-_ ]?(0?\d{1,2})(?![0-9])")
 _COATS_RE = re.compile(r"(?<![a-z0-9])(\d{1,4})[-_ ]?coats?(?![a-z])")
