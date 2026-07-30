@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ActivityIndicator, Linking, ScrollView, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, ScrollView, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
@@ -11,6 +11,7 @@ import { Txt } from "@/components/AppText";
 import { AppearanceRail } from "@/components/AppearanceRail";
 import { ImageViewer, type ViewerImage } from "@/components/ImageViewer";
 import { MarkToggles } from "@/components/MarkToggles";
+import { GlazeNoteField } from "@/components/GlazeNoteField";
 import { CoatsStrip } from "@/components/CoatsStrip";
 import { EmptyState } from "@/components/EmptyState";
 import { PressableScale } from "@/components/PressableScale";
@@ -28,7 +29,13 @@ import {
   type GlazeRef,
   type GroupedAppearances,
 } from "@/lib/glazes";
-import { glazeMarkQuery, setGlazeMarkState, toggleGlazeFavorite } from "@/db/repo";
+import {
+  glazeMarkQuery,
+  markKey,
+  setGlazeMarkNote,
+  setGlazeMarkState,
+  toggleGlazeFavorite,
+} from "@/db/repo";
 import { colors } from "@/theme/tokens";
 
 /**
@@ -156,10 +163,42 @@ export default function GlazeDetailScreen() {
             <MarkToggles
               state={mark?.state ?? null}
               favorite={mark?.favorite ?? false}
-              onSetState={(next) => void setGlazeMarkState(ref, next, glaze.name)}
+              onSetState={(next) => {
+                // Clearing the mark deletes the row, and a note lives on the row. Demotion to
+                // the wishlist only hides the note, so it passes through without ceremony.
+                if (next === null && mark?.note?.trim()) {
+                  Alert.alert(
+                    "Remove this mark?",
+                    "Your note on this glaze will be deleted too.",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Remove",
+                        style: "destructive",
+                        onPress: () => void setGlazeMarkState(ref, null),
+                      },
+                    ]
+                  );
+                  return;
+                }
+                void setGlazeMarkState(ref, next, glaze.name);
+              }}
               onToggleFavorite={() => void toggleGlazeFavorite(ref)}
             />
           </View>
+
+          {mark?.state === "owned" ? (
+            <View className="mt-3">
+              {/* Keyed so the field remounts when the glaze does: it seeds its draft once
+                  and never resyncs, so without this a new glaze would inherit the last
+                  one's text. */}
+              <GlazeNoteField
+                key={markKey(ref)}
+                note={mark.note}
+                onSave={(text) => void setGlazeMarkNote(ref, text)}
+              />
+            </View>
+          ) : null}
 
           <View className="mt-4 flex-row flex-wrap">
             {[

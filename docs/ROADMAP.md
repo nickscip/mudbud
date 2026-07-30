@@ -114,15 +114,23 @@ owned.
 - **C2 · Save control** — **done**. `MarkToggles` is now an exclusive wishlist/owned pair —
   pressing the active choice clears the mark — with favourite appearing only once owned.
   `toggleGlazeMark` split into `setGlazeMarkState` and `toggleGlazeFavorite`.
-- **C3 · Lists that are easy to reach** — **todo**. Today the only way in is three chips on
-  the search screen (`MARK_FILTERS` in `src/app/glazes/index.tsx`). Wanted: a real destination
-  with Wishlist / Owned / Favourites, reachable from navigation. Keep the server-side
-  `p_codes` / `p_code_manufacturers` approach — filtering an already-fetched page silently
-  drops anything ranked below the limit, which is the bug that migration was written to fix.
-- **C4 · Private notes on owned glazes** — **todo**. Local SQLite, same rationale as
-  marks: personal, offline, and the hosted catalog stays read-only. Either a `note` column
-  on `glaze_marks` or a `glaze_notes` table if multiple dated notes per glaze are wanted
-  (decision, see below).
+- **C3 · Lists that are easy to reach** — **done**. `/glazes/lists` is a real destination —
+  Wishlist / Owned / Favourites as segments — reached from the shelf header and the catalog
+  header. The label/predicate/empty-copy table moved to `src/lib/markFilters.ts` so the
+  search chips and the segments cannot disagree about membership. The server-side
+  `p_codes` / `p_code_manufacturers` path is kept, with `p_limit` set to the exact ref count
+  so a large collection is never truncated; order is local (`updated_at` desc), and a mark
+  whose catalog row is unreachable degrades to its denormalized name instead of vanishing.
+- **C4 · Private notes on owned glazes** — **done**, as one `note` column on `glaze_marks`
+  (decision resolved below): device schema v2, appended by `ALTER` for v1 devices and carried
+  by the v1 rebuild for older ones. Columns added from here on go last in
+  `GLAZE_MARKS_COLUMNS`, because `ALTER` can only append and the two install paths are asserted
+  to produce the same column order. The field autosaves under the mark toggles and is offered
+  only while owned; demotion to the wishlist *keeps* the note (a note is authored data, a heart
+  is a flag) and only clearing the mark deletes it, behind a confirm. `setGlazeMarkNote` guards
+  on the row existing rather than on it being owned — the debounce means a save can land after
+  the mark has moved, and refusing it there lost text the model says is kept, while a save after
+  the mark is *cleared* still no-ops because the row is gone.
 - **C5 · Publish a note** — **blocked** by E1/E2/E3. Private-by-default with an explicit
   opt-in per note. Ties into D7.
 
@@ -174,9 +182,11 @@ epic is filling the tabs out (D3–D7).
   opacity. Avoid RGB-Euclidean colour distance — that was one of the things `glazy` got
   wrong. Once F lands, cross-brand similars ("the Mayco equivalent of PC-20") become the
   most valuable version of this feature.
-- **D7 · Comments tab** — **partial / blocked**. The private half is C4 and can ship alone,
-  which is a good reason to build the tab now with one section. The public half is blocked
-  by E1/E2/E3.
+- **D7 · Comments tab** — **partial / blocked**. The private half shipped with C4, but as an
+  autosaving field under the mark toggles rather than a tab — a note about *your jar* belongs
+  next to the owned toggle, not behind a fifth tab. The public half is blocked by E1/E2/E3
+  and will need its own home when it arrives; whether that is a tab is an open layout
+  question, not settled by C4.
 
 ## Epic E — Platform prerequisites
 
@@ -201,6 +211,14 @@ E4 is Python work on a pipeline that already runs.
   `etl/glaze_etl/core/composite_splitter.py` and replays against stored HTML snapshots in
   seconds, so iteration is cheap and needs no re-crawl. See F5 — the splitter also holds an
   AMACO layout assumption that has to move behind the adapter.
+- **E5 · Orphan blob GC** — **todo**, small, not urgent. The uploader skips keys already in
+  Storage and never deletes, so an image whose bytes change between crawls leaves its old
+  renditions behind. Measured on the hosted bucket (2026-07-29): `glaze_images` references
+  968 distinct shas, the bucket holds 970 × 4 objects — 8 orphans. Kilobytes today; the
+  weekly crawl (G2) is what would make them accumulate, and Mayco (Epic F) multiplies the
+  churn. The fix is a sweep that deletes objects whose sha no row references — belongs in
+  the ETL next to the uploader, gated behind a `--prune` flag rather than run implicitly,
+  because "referenced" must be computed against the same database the uploader wrote.
 
 ## Epic F — Mayco, and making ingestion source-agnostic
 
@@ -360,8 +378,14 @@ Ordered roughly by what unblocks what — G1 gates everything.
   `20260727000200` while the bundle sent 13, and every search returned PostgREST's
   `PGRST202`. Applying `20260728000100`/`20260728000200` is the immediate fix; the durable
   one is that `deploy-schema.yml` is now live and is the only way this database changes
-  again. Also outstanding: confirm the private image bucket and its signed-URL policy, and
-  decide the dev-vs-prod project split before testers exist rather than after.
+  again. Applied for real on 2026-07-29: a staging-environment dispatch of `deploy-schema.yml`
+  brought the hosted schema current through `20260729000300` (similar_glazes), with the
+  ledger agreeing. The bucket is confirmed the same day: `mudbud_amaco` is private, no
+  storage policies grant anon anything, signed URLs serve, and every sha `glaze_images`
+  references resolves to a stored object — 968 distinct images × 4 renditions, plus 8
+  orphan objects (see E5). Still open: the dev-vs-prod project split, deliberately
+  deferred to land with G4/G6 — the hard deadline is before the first external TestFlight
+  build, because retrofitting means moving live testers to a different backend.
 - **G2 · Point the sync at the hosted project** — **todo**, mostly config. The workflow
   already exists: `.github/workflows/sync-catalog.yml` runs weekly (Monday 09:00 UTC) plus
   `workflow_dispatch`, and reads `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_DB_URL`
@@ -430,7 +454,14 @@ Ordered roughly by what unblocks what — G1 gates everything.
     public repo, so a red run does not block a merge.
   CI's Postgres is pinned to 17 to match the Supabase stack — server versions disagree about
   catalog output, which already bit one assertion.
-  Still to add: whatever build or release automation G4–G8 settle on.
+  Still to add: whatever build or release automation G4–G8 settle on, and a way to test
+  `src/db/repo.ts`. That last one is a real gap rather than a wish — `test-device-db.mjs` runs
+  DDL strings against `node:sqlite`, so it proves the upgrade path and nothing about the repo
+  functions above it, which is how C4 shipped a review round with a note-losing guard in
+  `setGlazeMarkNote`. The invariants worth asserting are all in one file: favourite only on
+  owned, notes only on a row that exists, whitespace stored as NULL, and demotion keeping the
+  note. Needs a Drizzle-over-`node:sqlite` harness or an equivalent, since the repo imports
+  expo-sqlite.
 
 ## Epic H — Mud Bud, and the style layer
 
@@ -516,8 +547,9 @@ Kept separate so nobody picks up a UI ticket and discovers the well is dry.
 - **Ingredients** — community-entered, out of scope, or reframed as "safety data and a link
   out" using whatever Mayco's document taxonomies actually hold?
 - **Popularity signal** — wait for accounts, or ship a curated list labelled as curated?
-- **Notes shape** — one note per owned glaze, or many dated notes? Affects whether C4 is a
-  column or a table, and whether publishing is per-note or per-glaze.
+- ~~**Notes shape** — one note per owned glaze, or many dated notes?~~ — decided with C4:
+  one note per glaze, a column on `glaze_marks`. Publishing (C5) is therefore per-glaze;
+  revisiting dated notes later is a v3 schema bump, not a redesign.
 - **Wishlist and cross-device** — do lists stay local-only (offline-first, no account), or
   does E1 sync them? The current design is deliberately local; syncing is a real reversal.
 - **Sponsorship** — is a paid featured slot actually wanted at this stage, and what does a
@@ -547,8 +579,8 @@ Not a commitment, just the dependency-respecting reading of the above.
 3. **Ships now, no blockers, high value** — ~~D1 header slim-down, D2 tab spike, D4 combos
    tab from the AMACO pairs already loaded~~ (done: header, tab shell, and the pairs rail
    as its own tab), D6 similar glazes.
-4. **The saving rework end to end** — C3 and C4 are what remain; C1 and C2 landed with F7.
-   Self-contained, local, and the thing a user touches every session.
+4. ~~**The saving rework end to end** — C3 and C4 are what remain; C1 and C2 landed with
+   F7.~~ — **done**: Epic C is now C5 (publish, blocked by E1–E3) and nothing else.
 5. **Epic F proper** — F1–F9 de-AMACO-ing, then F10–F14 for the adapter, then F15 combos.
    The abstraction is only proven once a second adapter runs through it, so do not treat
    the cleanup as finished before Mayco loads.

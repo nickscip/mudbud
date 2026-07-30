@@ -94,6 +94,33 @@ function deviceOnVersion0() {
   return db;
 }
 
+// The v1 shape written out by hand on purpose: GLAZE_MARKS_COLUMNS now carries `note`, so
+// reusing it here would test the upgrade against a table no v1 device ever had.
+const V1_GLAZE_MARKS = `
+  CREATE TABLE glaze_marks (
+    manufacturer TEXT NOT NULL,
+    code TEXT NOT NULL,
+    state TEXT NOT NULL,
+    favorite INTEGER NOT NULL DEFAULT 0,
+    name TEXT,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (manufacturer, code)
+  );
+`;
+
+/** A device that installed after the re-key but before notes existed. */
+function deviceOnVersion1() {
+  const db = new DatabaseSync(":memory:");
+  db.exec(V1_GLAZE_MARKS);
+  db.exec(`
+    INSERT INTO glaze_marks (manufacturer, code, state, favorite, name, updated_at) VALUES
+      ('amaco', 'PC-20', 'owned',    1, 'PC-20 Blue Rutile', 111),
+      ('amaco', 'SM-1',  'wishlist', 0, 'SM-1 Bright Blue',  222);
+  `);
+  db.exec("PRAGMA user_version = 1");
+  return db;
+}
+
 const marksShape = (db) =>
   db
     .prepare("SELECT name, type, [notnull], dflt_value, pk FROM pragma_table_info('glaze_marks')")
@@ -116,15 +143,19 @@ check("a fresh install lands on the current version", () => {
   );
 });
 
-check("both install paths produce the same marks table", () => {
+check("every install path produces the same marks table", () => {
   const fresh = new DatabaseSync(":memory:");
   initDatabase(fresh);
 
-  const upgraded = deviceOnVersion0();
-  initDatabase(upgraded);
+  const fromV0 = deviceOnVersion0();
+  initDatabase(fromV0);
+
+  const fromV1 = deviceOnVersion1();
+  initDatabase(fromV1);
 
   // The assertion that catches a column list edited in one place and not the other.
-  equal(marksShape(upgraded), marksShape(fresh), "column definitions differ between paths");
+  equal(marksShape(fromV0), marksShape(fresh), "v0 upgrade differs from a fresh install");
+  equal(marksShape(fromV1), marksShape(fresh), "v1 upgrade differs from a fresh install");
 });
 
 check("an upgrade keeps every mark", () => {
@@ -194,6 +225,56 @@ check("the composite key rejects a duplicate and allows a shared code", () => {
   assert(rejected, "the same brand and code was inserted twice");
 });
 
+check("a v1 device gains the note column and keeps its rows", () => {
+  const db = deviceOnVersion1();
+  initDatabase(db);
+  equal(db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION, "user_version");
+  equal(
+    db.prepare("SELECT manufacturer, code, state, favorite, name, note, updated_at FROM glaze_marks ORDER BY code").all(),
+    [
+      {
+        manufacturer: "amaco",
+        code: "PC-20",
+        state: "owned",
+        favorite: 1,
+        name: "PC-20 Blue Rutile",
+        note: null,
+        updated_at: 111,
+      },
+      {
+        manufacturer: "amaco",
+        code: "SM-1",
+        state: "wishlist",
+        favorite: 0,
+        name: "SM-1 Bright Blue",
+        note: null,
+        updated_at: 222,
+      },
+    ],
+    "rows after the v1 upgrade"
+  );
+});
+
+check("a note survives a relaunch", () => {
+  const db = deviceOnVersion1();
+  initDatabase(db);
+  db.exec("UPDATE glaze_marks SET note = 'thin coats crawl' WHERE code = 'PC-20'");
+  initDatabase(db);
+  equal(
+    db.prepare("SELECT note FROM glaze_marks WHERE code = 'PC-20'").get(),
+    { note: "thin coats crawl" },
+    "note after relaunch"
+  );
+});
+
+check("a second launch on the v1 path changes nothing", () => {
+  const db = deviceOnVersion1();
+  initDatabase(db);
+  const after = db.prepare("SELECT * FROM glaze_marks ORDER BY code").all();
+  initDatabase(db);
+  equal(db.prepare("SELECT * FROM glaze_marks ORDER BY code").all(), after, "rows after relaunch");
+});
+
 check("a second launch changes nothing", () => {
   const db = deviceOnVersion0();
   initDatabase(db);
@@ -248,20 +329,59 @@ check("nothing to do when already current", () => {
 });
 
 check("a fresh table is not rebuilt", () => {
-  // Version 0 with the new shape already present is a fresh install, not an upgrade.
+  // Version 0 with the current shape already present is a fresh install, not an upgrade.
   equal(
-    upgradeStatements(0, ["manufacturer", "code", "state", "favorite", "name", "updated_at"]),
+    upgradeStatements(0, [
+      "manufacturer",
+      "code",
+      "state",
+      "favorite",
+      "name",
+      "note",
+      "updated_at",
+    ]),
     [],
     "fresh install at version 0"
   );
 });
 
-check("an old table is rebuilt", () => {
+check("an old table is rebuilt, and only rebuilt", () => {
+  // The rebuild lands on the full current shape, so an ALTER on top would fail on a
+  // duplicate column.
   const statements = upgradeStatements(0, ["code", "owned", "favorite", "name", "updated_at"]);
   equal(statements.length, 1, "statement count");
   assert(
     statements[0].includes("glaze_marks_new") && statements[0].includes("'amaco'"),
     "the rebuild does not look like a rebuild"
+  );
+});
+
+check("a v1 table gains the note column, and only that", () => {
+  const statements = upgradeStatements(1, [
+    "manufacturer",
+    "code",
+    "state",
+    "favorite",
+    "name",
+    "updated_at",
+  ]);
+  equal(statements.length, 1, "statement count");
+  assert(statements[0].includes("ADD COLUMN note"), "the upgrade is not the note ALTER");
+});
+
+check("a v1 table that already has the column is left alone", () => {
+  equal(
+    upgradeStatements(1, [
+      "manufacturer",
+      "code",
+      "state",
+      "favorite",
+      "name",
+      "note",
+      "updated_at",
+    ]),
+    [],
+    "already-noted table at version 1"
   );
 });
 

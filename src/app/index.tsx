@@ -68,11 +68,26 @@ export default function ShelfScreen() {
                 </Txt>
               </View>
               <View className="mt-1 flex-row items-center">
-                {/* The glaze catalog is the app's other half, and the shelf is the only
-                    screen you land on — without a way through, it is unreachable. Quiet
-                    and secondary: documenting a piece is still the primary action. */}
+                {/* The glaze half is the app's other half, and the shelf is the only screen
+                    you land on — without a way through, both of these are unreachable. Your
+                    own lists come first because they are the half you already curated; the
+                    catalog behind it is where you go to add to them. Quiet and secondary
+                    either way: documenting a piece is still the primary action. */}
+                <PressableScale
+                  onPress={() => router.push("/glazes/lists")}
+                  accessibilityLabel="Your glazes"
+                  className="mr-2 h-12 w-12 items-center justify-center rounded-full border border-stone-200"
+                  style={{ backgroundColor: colors.stone[50] }}
+                >
+                  <Ionicons
+                    name="bookmark-outline"
+                    size={22}
+                    color={colors.glaze[700]}
+                  />
+                </PressableScale>
                 <PressableScale
                   onPress={() => router.push("/glazes")}
+                  accessibilityLabel="Glaze catalog"
                   className="mr-2 h-12 w-12 items-center justify-center rounded-full border border-stone-200"
                   style={{ backgroundColor: colors.stone[50] }}
                 >

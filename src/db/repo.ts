@@ -201,6 +201,10 @@ export function glazeMarkQuery(ref: GlazeRef) {
  *
  * Wishlist and owned are one choice, so this sets rather than toggles — moving between them is a
  * single write and there is no intermediate state where a glaze is both.
+ *
+ * A demotion to the wishlist keeps the note where it clears the favourite, on purpose: a note is
+ * authored data and a heart is a flag. The screens hide it while the glaze is not owned, and
+ * re-owning brings it back.
  */
 export async function setGlazeMarkState(
   ref: GlazeRef,
@@ -245,5 +249,30 @@ export async function toggleGlazeFavorite(ref: GlazeRef): Promise<void> {
   await db
     .update(glazeMarks)
     .set({ favorite: !existing.favorite, updatedAt: Date.now() })
+    .where(sameGlaze(ref));
+}
+
+/**
+ * Write the private note on a marked glaze.
+ *
+ * Guarded on the row existing rather than on it being owned, which is a narrower guard than it
+ * looks and deliberately so. The screens only offer the field while a glaze is owned, so nothing
+ * can author a note onto a wishlist row in the first place; what the row check buys is the two
+ * cases where a write lands late. The editor autosaves on a debounce, so a save can arrive after
+ * the mark has already moved — and an owned-only guard silently dropped exactly that text when
+ * the user typed and then pressed Wishlist inside the debounce window. Demotion keeps the note
+ * (see `setGlazeMarkState`), so dropping the write contradicted the model as well as losing
+ * words. A write after the mark is *cleared* still no-ops, because the row is gone and
+ * resurrecting a note onto a deleted mark is the one outcome that would be wrong.
+ *
+ * Whitespace stores NULL rather than an empty string, so "has a note" checks stay honest.
+ */
+export async function setGlazeMarkNote(ref: GlazeRef, note: string): Promise<void> {
+  const existing = await db.query.glazeMarks.findFirst({ where: sameGlaze(ref) });
+  if (!existing) return;
+
+  await db
+    .update(glazeMarks)
+    .set({ note: note.trim() || null, updatedAt: Date.now() })
     .where(sameGlaze(ref));
 }

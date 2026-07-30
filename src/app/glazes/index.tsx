@@ -16,11 +16,12 @@ import { Txt } from "@/components/AppText";
 import { EmptyState } from "@/components/EmptyState";
 import { FilterChip } from "@/components/FilterChip";
 import { GlazeCard } from "@/components/GlazeCard";
+import { PressableScale } from "@/components/PressableScale";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { glazeRef, useGlazeSearch, type GlazeFilters, type GlazeHit } from "@/lib/glazes";
+import { MARK_FILTERS, MARK_FILTER_KEYS, type MarkFilterKey } from "@/lib/markFilters";
 import { glazeCatalogConfigured } from "@/lib/supabase";
 import { glazeMarksQuery, markKey } from "@/db/repo";
-import type { GlazeMark } from "@/db/schema";
 import { colors } from "@/theme/tokens";
 
 /** Cone presets, labelled the way a potter would say them. */
@@ -31,32 +32,6 @@ const CONE_PRESETS = [
   { label: "Cone 10", from: 32, to: 32 },
 ] as const;
 
-/**
- * The three ways to slice your own marks: what you want, what you have, what you love.
- *
- * Chip label, row predicate and empty-state wording live in one entry so a filter cannot end up
- * labelled one thing and matching another.
- */
-const MARK_FILTERS = {
-  wishlist: {
-    label: "Wishlist",
-    match: (m: GlazeMark) => m.state === "wishlist",
-    empty: "Nothing on the wishlist yet",
-  },
-  owned: {
-    label: "Owned",
-    match: (m: GlazeMark) => m.state === "owned",
-    empty: "Nothing marked owned yet",
-  },
-  favorite: {
-    label: "Favorites",
-    match: (m: GlazeMark) => m.favorite,
-    empty: "No favourites yet",
-  },
-} as const;
-
-type MarkFilter = keyof typeof MARK_FILTERS;
-
 type Section = { title: string; subtitle?: string; data: GlazeHit[] };
 
 export default function GlazeSearchScreen() {
@@ -66,7 +41,7 @@ export default function GlazeSearchScreen() {
   const [term, setTerm] = useState("");
   const [conePreset, setConePreset] = useState<number | null>(null);
   const [foodSafeOnly, setFoodSafeOnly] = useState(false);
-  const [markFilter, setMarkFilter] = useState<MarkFilter | null>(null);
+  const [markFilter, setMarkFilter] = useState<MarkFilterKey | null>(null);
 
   // Marks are local, so which glazes to ask for is decided here rather than in the RPC — the
   // catalog has no idea what you own, and should not.
@@ -75,22 +50,40 @@ export default function GlazeSearchScreen() {
     () => new Map((marks ?? []).map((m) => [markKey(m), m])),
     [marks]
   );
+  // Sent to the server rather than applied to the page we already have, so a marked glaze ranked
+  // below the limit still shows up under its own filter. Brand travels with the code, or the
+  // filter would surface another manufacturer's glaze of the same name.
+  //
+  // Keyed on which glazes are marked, not on the array holding them: every mark write hands this
+  // screen a new `marks` identity, and since C4 the note autosave writes on every typing pause —
+  // from the detail screen, which leaves this one mounted underneath. Depending on the array
+  // re-ran the entire search each time, with no filter active and nothing on screen changing.
+  const markRefsKey = markFilter
+    ? (marks ?? [])
+        .filter(MARK_FILTERS[markFilter].match)
+        .map(markKey)
+        .join("|")
+    : "";
+  const markRefs = useMemo(
+    () =>
+      markFilter
+        ? (marks ?? [])
+            .filter(MARK_FILTERS[markFilter].match)
+            .map((m) => ({ manufacturer: m.manufacturer, code: m.code }))
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- markRefsKey is the content of marks
+    [markFilter, markRefsKey]
+  );
+
   const filters = useMemo<GlazeFilters>(() => {
     const preset = conePreset === null ? null : CONE_PRESETS[conePreset];
     return {
       coneFrom: preset?.from,
       coneTo: preset?.to,
       foodSafeOnly,
-      // Sent to the server rather than applied to the page we already have, so a marked glaze
-      // ranked below the limit still shows up under its own filter. Brand travels with the
-      // code, or the filter would surface another manufacturer's glaze of the same name.
-      marks: markFilter
-        ? (marks ?? [])
-            .filter(MARK_FILTERS[markFilter].match)
-            .map((m) => ({ manufacturer: m.manufacturer, code: m.code }))
-        : undefined,
+      marks: markRefs,
     };
-  }, [conePreset, foodSafeOnly, markFilter, marks]);
+  }, [conePreset, foodSafeOnly, markRefs]);
 
   // A mark filter with nothing marked must show nothing, so there is no query to make.
   const nothingMarked = markFilter !== null && (filters.marks?.length ?? 0) === 0;
@@ -123,10 +116,24 @@ export default function GlazeSearchScreen() {
     [sections]
   );
 
+  // Your lists are one tap from the catalog because they answer the catalog's own question —
+  // "do I have this one already?" — and they are local, so the button works even when the
+  // catalog itself cannot.
+  const listsButton = (
+    <PressableScale
+      onPress={() => router.push("/glazes/lists")}
+      hitSlop={8}
+      accessibilityLabel="Your glazes"
+      className="h-10 w-10 items-center justify-center rounded-full bg-stone-50 border border-stone-200"
+    >
+      <Ionicons name="bookmark-outline" size={18} color={colors.stone[700]} />
+    </PressableScale>
+  );
+
   if (!glazeCatalogConfigured) {
     return (
       <View className="flex-1">
-        <ScreenHeader title="Glazes" />
+        <ScreenHeader title="Glazes" right={listsButton} />
         <EmptyState
           icon="cloud-offline-outline"
           title="Catalog not connected"
@@ -138,7 +145,7 @@ export default function GlazeSearchScreen() {
 
   return (
     <View className="flex-1">
-      <ScreenHeader title="Glazes" />
+      <ScreenHeader title="Glazes" right={listsButton} />
 
       <View className="px-4">
         <View className="flex-row items-center rounded-2xl bg-white px-3 border border-stone-200">
@@ -174,7 +181,7 @@ export default function GlazeSearchScreen() {
             selected={foodSafeOnly}
             onPress={() => setFoodSafeOnly((on) => !on)}
           />
-          {(Object.keys(MARK_FILTERS) as MarkFilter[]).map((key) => (
+          {MARK_FILTER_KEYS.map((key) => (
             <FilterChip
               key={key}
               label={MARK_FILTERS[key].label}

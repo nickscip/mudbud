@@ -7,7 +7,7 @@ shared surface is Postgres — specifically the RPC signatures in `supabase/migr
 ```mermaid
 graph TD
   subgraph app["Expo app — src/ (TypeScript, SDK 54 + Expo Go)"]
-    screens["app/ — Expo Router screens<br/>shelf · piece timeline · glaze search and detail"]
+    screens["app/ — Expo Router screens<br/>shelf · piece timeline · glaze search · your lists · glaze detail"]
     components["components/ — presentation only"]
     glazes["lib/glazes/ — catalog client<br/>types · catalog · grouping · hooks"]
     localdb["db/ — expo-sqlite + Drizzle<br/>pieces · entries · media · glaze marks"]

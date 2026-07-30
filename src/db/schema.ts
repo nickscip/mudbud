@@ -69,6 +69,14 @@ export const glazeMarks = sqliteTable(
     /** Denormalized so the shelf can list marked glazes without reaching the network. */
     name: text("name"),
     updatedAt: integer("updated_at").notNull(),
+    /**
+     * One private note per glaze, only meaningful while owned. Stays on this device.
+     *
+     * Last, matching `GLAZE_MARKS_COLUMNS` — columns added after v1 are appended, because
+     * `ALTER TABLE ADD COLUMN` cannot insert in the middle and every install path has to
+     * agree on the order.
+     */
+    note: text("note"),
   },
   (table) => [primaryKey({ columns: [table.manufacturer, table.code] })]
 );

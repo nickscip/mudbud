@@ -20,8 +20,9 @@
  * carries one.
  *
  * 1 — glaze_marks re-keyed to (manufacturer, code), `owned` replaced by `state`.
+ * 2 — note TEXT added to glaze_marks (C4).
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * The marks table's columns, written once.
@@ -29,6 +30,9 @@ export const SCHEMA_VERSION = 1;
  * A fresh install creates this table and an upgrading device rebuilds it, and the two paths have
  * to produce identical shapes — a column that differs between them is a bug that only appears on
  * devices which took the other path, the hardest kind to reproduce.
+ *
+ * Columns added after v1 go at the end, before the key: `ALTER TABLE ADD COLUMN` can only
+ * append, and every path is expected to land on the same column order.
  */
 export const GLAZE_MARKS_COLUMNS = `
   manufacturer TEXT NOT NULL,
@@ -37,6 +41,7 @@ export const GLAZE_MARKS_COLUMNS = `
   favorite INTEGER NOT NULL DEFAULT 0,
   name TEXT,
   updated_at INTEGER NOT NULL,
+  note TEXT,
   PRIMARY KEY (manufacturer, code)
 `;
 
@@ -112,6 +117,13 @@ const REKEY_GLAZE_MARKS = `
 `;
 
 /**
+ * v2 — one private note per glaze. Additive, so a plain ALTER is enough; the v1 rebuild above
+ * already lands on the full current shape via GLAZE_MARKS_COLUMNS, so this only applies to a
+ * table that survives as-is.
+ */
+const ADD_NOTE_COLUMN = `ALTER TABLE glaze_marks ADD COLUMN note TEXT;`;
+
+/**
  * What has to run to bring a database at `fromVersion` up to `SCHEMA_VERSION`.
  *
  * `glazeMarkColumns` is the column list `PRAGMA table_info(glaze_marks)` reports *after*
@@ -135,6 +147,13 @@ export function upgradeStatements(
   const marksNeedRekeying =
     glazeMarkColumns.length > 0 && !glazeMarkColumns.includes("manufacturer");
   if (fromVersion < 1 && marksNeedRekeying) statements.push(REKEY_GLAZE_MARKS);
+
+  // A rekey rebuild already carries `note`, so the ALTER is only for a table that survives
+  // as-is: a v1 device, or a fresh table would report the column and skip both.
+  const noteMissing = glazeMarkColumns.length > 0 && !glazeMarkColumns.includes("note");
+  if (fromVersion < 2 && noteMissing && !marksNeedRekeying) {
+    statements.push(ADD_NOTE_COLUMN);
+  }
 
   return statements;
 }
