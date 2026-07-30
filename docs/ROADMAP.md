@@ -201,6 +201,14 @@ E4 is Python work on a pipeline that already runs.
   `etl/glaze_etl/core/composite_splitter.py` and replays against stored HTML snapshots in
   seconds, so iteration is cheap and needs no re-crawl. See F5 — the splitter also holds an
   AMACO layout assumption that has to move behind the adapter.
+- **E5 · Orphan blob GC** — **todo**, small, not urgent. The uploader skips keys already in
+  Storage and never deletes, so an image whose bytes change between crawls leaves its old
+  renditions behind. Measured on the hosted bucket (2026-07-29): `glaze_images` references
+  968 distinct shas, the bucket holds 970 × 4 objects — 8 orphans. Kilobytes today; the
+  weekly crawl (G2) is what would make them accumulate, and Mayco (Epic F) multiplies the
+  churn. The fix is a sweep that deletes objects whose sha no row references — belongs in
+  the ETL next to the uploader, gated behind a `--prune` flag rather than run implicitly,
+  because "referenced" must be computed against the same database the uploader wrote.
 
 ## Epic F — Mayco, and making ingestion source-agnostic
 
@@ -360,8 +368,14 @@ Ordered roughly by what unblocks what — G1 gates everything.
   `20260727000200` while the bundle sent 13, and every search returned PostgREST's
   `PGRST202`. Applying `20260728000100`/`20260728000200` is the immediate fix; the durable
   one is that `deploy-schema.yml` is now live and is the only way this database changes
-  again. Also outstanding: confirm the private image bucket and its signed-URL policy, and
-  decide the dev-vs-prod project split before testers exist rather than after.
+  again. Applied for real on 2026-07-29: a staging-environment dispatch of `deploy-schema.yml`
+  brought the hosted schema current through `20260729000300` (similar_glazes), with the
+  ledger agreeing. The bucket is confirmed the same day: `mudbud_amaco` is private, no
+  storage policies grant anon anything, signed URLs serve, and every sha `glaze_images`
+  references resolves to a stored object — 968 distinct images × 4 renditions, plus 8
+  orphan objects (see E5). Still open: the dev-vs-prod project split, deliberately
+  deferred to land with G4/G6 — the hard deadline is before the first external TestFlight
+  build, because retrofitting means moving live testers to a different backend.
 - **G2 · Point the sync at the hosted project** — **todo**, mostly config. The workflow
   already exists: `.github/workflows/sync-catalog.yml` runs weekly (Monday 09:00 UTC) plus
   `workflow_dispatch`, and reads `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_DB_URL`
