@@ -58,13 +58,25 @@ begin
   -- `coats_composite` is exempt while the splitter is unsolved: the filename was fully
   -- understood, so confidence is honestly high, but the thickness lives inside the pixels
   -- and is not extracted yet. Those rows are counted below rather than hidden.
+  --
+  -- The base glaze's own page is exempt for the same reason. A layering photograph appears on
+  -- both glazes' pages — `DL-23overDL-1` is on DL-23's *and* DL-1's — and
+  -- `layered_over_glaze_id` can only express the pair from the top glaze's side. On DL-1's
+  -- page the filename resolved completely, so `high` is honest, and the fact it states is
+  -- "something else was on top of me", which no column holds. The row is identified by its
+  -- own evidence naming it as the base, rather than by role alone: an unresolved
+  -- `layered_over_code` that *should* have resolved is a real failure and must stay visible.
   select count(*) into n
-  from appearances a join glaze_images i on i.id = a.image_id
+  from appearances a
+  join glaze_images i on i.id = a.image_id
+  join glazes g on g.id = a.glaze_id
   where a.confidence = 'high'
     and i.role not in ('label_chip', 'coats_composite')
     and a.cone_id is null and a.coat_level_id is null
     and a.clay_body_id is null and a.form_id is null
-    and a.layered_over_glaze_id is null;
+    and a.layered_over_glaze_id is null
+    and a.evidence->>'layered_over_code' is distinct from g.code
+    and not (a.evidence ? 'layered_under');
   if n > 0 then
     raise exception '% high-confidence appearances carry no condition at all', n;
   end if;

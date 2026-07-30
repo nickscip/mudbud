@@ -26,22 +26,13 @@ Facts to keep in mind while reading:
   cone categories, 630 distinct codes) rather than by a full crawl. The full crawl is an
   endurance and floor check, not the correctness evidence.
 
-  **Resuming the hosted Mayco load.** 271 of 630 are in as of 2026-07-30, with zero parse
-  issues. A bare `sync --manufacturer mayco` does resume correctly — an already-stored
-  product hashes equal and is skipped — but it still pays the 10s delay to re-fetch each
-  one, so finishing costs a full pass either way. Passing explicit slugs skips discovery and
-  only fetches what is named, which is how the load was chunked into interruptible pieces:
-
-  ```sh
-  # the slugs still missing, straight from the database
-  psql "$SUPABASE_DB_URL" -tAc "select g.slug from glazes g
-    join manufacturers m on m.id = g.manufacturer_id where m.key = 'mayco'" > /tmp/have
-  # then, in batches of ~40 so no single run is long enough to be interrupted:
-  uv run glaze-etl sync --manufacturer mayco <slug> <slug> ...
-  ```
-
-  The work list comes from `discover`, or equivalently from the Store API's
-  `?category=98&per_page=100` pages filtered through `is_glaze`.
+  **The full hosted load is done** (2026-07-30): 630 Mayco glazes beside AMACO's 352, so
+  the catalog is 982 glazes and 4148 appearances. All 25 lines resolved, 620 of 630 carry a
+  cone range (the 10 that do not are the 6 raku, for which Mayco publishes none, and the 4
+  products filed under no line at all), and every one has an appearance and colour terms.
+  `data_quality.sql` passes against the hosted database, per-brand floors included. One
+  parse issue: a single image of SW-511 hit a transient Storage error and is filed for
+  triage — clearing it needs a reparse, which E6 makes lossy, so it waits on E6.
 - **`etl/.env` points `SUPABASE_DB_URL` at the hosted project, not at the local stack.** So
   a bare `glaze-etl sync` writes to production. Override the three `SUPABASE_*` variables on
   the command line for local work. This is worth knowing before the first run, not after.
