@@ -39,15 +39,17 @@ today they share one text box and four chips.
   `websearch_to_tsquery` ANDs its terms, so "sage green" reaches a glaze whose measured
   colour earned "sage" (`20260726000400_color_families.sql`).
 - **A3 · Feature search — texture, opacity, line** — **partial, client-side only**.
-  `p_surface`, `p_opacity` and `p_line` are already RPC parameters and already indexed
-  vocabularies. Nothing in `GlazeFilters` carries them, `catalog.ts` never sends them, and
+  `p_surface`, `p_opacity` and `p_line` are already RPC parameters over seeded vocabulary
+  tables (only `line_id` and the cone columns actually carry indexes — immaterial at 352
+  rows behind the LIMIT fence, worth revisiting when Mayco lands).
+  Nothing in `GlazeFilters` carries them, `catalog.ts` never sends them, and
   there is no UI. Also needs vocabulary fetch helpers — `fetchCones` is the only one that
   exists, so surfaces / opacities / lines have no list to build chips from.
   "Type" is ambiguous — see Open decisions.
 - **A4 · Filter set worth the name** — **todo**, in two halves.
   - *Wiring only* (RPC already takes it): line, surface, opacity, manufacturer, full cone
     range instead of 4 presets, and `clayBodyIds` — which is already in `GlazeFilters`
-    (`src/lib/glazes/types.ts:86`) and already sent by `catalog.ts`, but no screen ever
+    (`src/lib/glazes/types.ts:107`) and already sent by `catalog.ts`, but no screen ever
     sets it. Clay body is a genuine pottery filter axis sitting half-built.
   - *Needs new RPC parameters*: price range (`price_min` / `price_max`), in-stock
     (`availability`), `is_dipping` / `is_brushing`, and the fuller safety set
@@ -58,9 +60,13 @@ today they share one text box and four chips.
 - **A5 · Filter UX** — **todo**. A horizontal chip rail does not survive 8+ facets. Needs a
   filter sheet with a result count, clear-all, and state that survives navigating into a
   glaze and back. Bottom-sheet library choice is a spike (Expo Go constraint).
-- **A6 · Pagination** — **todo**, small. `p_offset` exists server-side and the client never
-  sends it; `limit` is hardcoded to 40 in `searchGlazes`. Every facet added to A4 makes the
-  invisible cap more misleading.
+- **A6 · Pagination** — **todo**, medium rather than small. `p_offset` exists server-side
+  and the client never sends it; `limit` is hardcoded to 40 in `searchGlazes`. The client
+  half is the real work: results are split into match/near tiers, so appended pages must
+  merge per-tier (a page boundary can land mid-tier), `useGlazeSearch` replaces results
+  wholesale and needs an accumulate mode, and its effect keys on the `filters` object
+  identity — page state has to stay memoized or every page fetch re-fires the debounce.
+  Every facet added to A4 makes the invisible cap more misleading.
 - **A7 · Brand facet** — **blocked** by Epic F. `p_manufacturer` and `manufacturer_key` are
   both ready; cardinality is 1. A brand chip today filters nothing.
 - **A8 · Coat / application filters in search** — **blocked** by E4 (splitter).
@@ -177,11 +183,14 @@ epic is filling the tabs out (D3–D7).
   exposes `doc_cat` / `doc_tag` taxonomies, so technical documents may be reachable —
   but an SDS lists hazardous components, not a recipe, so at best this becomes "safety
   data and a link out". Needs a sourcing decision before it is a ticket.
-- **D6 · Similar glazes tab** — **todo**, and cheap. Buildable today from what is already
-  in Postgres: colour family overlap, `hero_hex` distance, same line, same surface and
-  opacity. Avoid RGB-Euclidean colour distance — that was one of the things `glazy` got
-  wrong. Once F lands, cross-brand similars ("the Mayco equivalent of PC-20") become the
-  most valuable version of this feature.
+- **D6 · Similar glazes tab** — **done** (`20260729000300_similar_glazes.sql`, live on the
+  hosted project the same day). An integer score over `color_terms` overlap (×3) plus same
+  surface (+2), opacity (+2) and line (+1); `hero_hex` distance was deliberately dropped —
+  RGB-Euclidean ranks perceptually unlike colours as close, the thing `glazy` got wrong,
+  and term overlap answers the question. Client side: `fetchSimilarGlazes`,
+  `useSimilarGlazes`, and a lazily-fetched Similar tab on the detail screen. Results are
+  not scoped to the anchor's brand on purpose — once F lands, cross-brand similars ("the
+  Mayco equivalent of PC-20") light up with no further work.
 - **D7 · Comments tab** — **partial / blocked**. The private half shipped with C4, but as an
   autosaving field under the mark toggles rather than a tab — a note about *your jar* belongs
   next to the owned toggle, not behind a fifth tab. The public half is blocked by E1/E2/E3
@@ -209,8 +218,9 @@ E4 is Python work on a pipeline that already runs.
 - **E4 · Coat-thickness splitter** — **partial**. The one appearance axis still
   unextracted. Unlocks A8 and the coat filter in D3. Work lives in
   `etl/glaze_etl/core/composite_splitter.py` and replays against stored HTML snapshots in
-  seconds, so iteration is cheap and needs no re-crawl. See F5 — the splitter also holds an
-  AMACO layout assumption that has to move behind the adapter.
+  seconds, so iteration is cheap and needs no re-crawl. F5 settled the seam question: the
+  splitter stays an AMACO-layout utility a source opts into via `interpret_image`, and the
+  ordinal-to-coat-level mapping lives on the adapter (`coat_order`).
 - **E5 · Orphan blob GC** — **todo**, small, not urgent. The uploader skips keys already in
   Storage and never deletes, so an image whose bytes change between crawls leaves its old
   renditions behind. Measured on the hosted bucket (2026-07-29): `glaze_images` references
@@ -259,46 +269,45 @@ every way that matters to the pipeline:
 
 ### De-AMACO-ing — real coupling, not just comments
 
-Most `amaco` mentions in `etl/glaze_etl/core/` are prose in docstrings, which is fine and
-should stay. These are the ones that actually bind behaviour:
+Landed as one branch, one commit per item. The end state is grep-provable and
+test-enforced: `glaze_etl/core/` never imports from `glaze_etl/sources/`
+(`tests/test_source_contract.py` scans for it), and `cli.py` / `activities/` /
+`workflows/` mention neither `AmacoAdapter` nor `shop.amaco.com`. A Mayco adapter is now
+one `sources/mayco/` package, one `SOURCES` entry, one `ManufacturerKey` member, and a
+fixtures directory — no core, CLI, activity, or workflow edits.
 
-- **F1 · `core/loader.py:25` imports an AMACO module** — **bug**.
-  `from glaze_etl.sources.amaco.vocabulary import CATEGORY_CONE_RANGE`, used at
-  `loader.py:61` to map a line's cone category to a range. A generic stage reaching into
-  one source's vocabulary. It is a visible violation of the seam `source_adapter.py`
-  documents, and Mayco's `fire_temp` categories are different strings entirely. The loader
-  already has `product.manufacturer.value` in hand three lines later — move the mapping
-  onto the adapter or a per-source vocabulary registry.
-- **F2 · `core/appearance_writer.py:121` hardcodes `"amaco"`** — **bug**. Every unresolved
-  filename token is filed as a parse issue against AMACO regardless of source, so Mayco's
-  issues would land under AMACO's name and its triage queue. `AppearanceWriter` has no
-  manufacturer at all — thread it in from `ParsedProduct`.
-- **F3 · Adapter selection is hardcoded** — **todo**.
-  `activities/crawl.py:68` (`_adapter`) refuses anything but `amaco` and returns
-  `AmacoAdapter()`; `cli.py` imports and constructs `AmacoAdapter` in five places
-  (`:57, :77, :185, :277, :360`) and pins `ManufacturerKey.AMACO` at `:104` and `:399`.
-  Needs a registry keyed by `ManufacturerKey` and a `--manufacturer` CLI flag.
-  `workflows/sync.py:48,129` already parameterise it as a default, so the workflow layer is
-  ready.
-- **F4 · Product URLs are built from an AMACO template** — **todo**.
-  `cli.py:83` and `:292` and `:368` construct `https://shop.amaco.com/{slug}/` from a slug
-  argument. Slug-to-URL is source knowledge; it belongs on the adapter
-  (`/product/<slug>/` for Mayco).
-- **F5 · Coat ordering assumes AMACO's layout** — **todo**. "Left to right is thin to
-  thick" is stated as fact in generic code: `core/media.py:51`, `core/pipeline.py:28`,
-  `core/composite_splitter.py:72,226`, and the refusal reason at `:237` literally says
-  "not an AMACO composite layout". Mayco is expected to present coats as *counts* (1/2/3)
-  rather than as one thin-to-thick composite — its Stroke & Coat line is sold on brush coat
-  count — but no Mayco swatch or composite has been fetched yet, so treat that as a
-  hypothesis to check first. Either way the ordering rule and the white-studio-background
-  detector need to move behind the adapter, or the splitter needs to be something an
-  adapter opts into. Overlaps E4.
-- **F6 · Change detection strips BigCommerce noise** — **todo**.
-  `core/fetcher.py:70` strips the `window.bodl` analytics blob and Cloudflare params inside
-  the generic `canonicalize_for_hash`. WordPress churns differently (nonces, cache
-  busters, emoji/asset version strings), so a Mayco crawl will either look byte-new every
-  pass — the 22 MB-a-week failure mode already learned once — or need its own patterns.
-  Make the noise pattern list a property of the adapter.
+- **F1 · `core/loader.py` imported an AMACO module** — **done**. The category-to-cone-range
+  mapping is `SourceAdapter.cone_range_for_category` (default `None`); the pipeline
+  computes it where it holds the adapter and passes it to `upsert_line`. The miss still
+  files `unmapped_cone_category` from the loader, which owns issues and stats.
+- **F2 · `core/appearance_writer.py` hardcoded `"amaco"`** — **done**. The manufacturer is
+  a keyword-only parameter threaded from the pipeline through `replace_appearances`; a
+  DB-backed test pins the issue row's `manufacturer_id` to the key passed in.
+- **F3 · Adapter selection was hardcoded** — **done**. `SOURCES` / `adapter_for` in
+  `sources/__init__.py`, `--manufacturer` (default `amaco`) on every adapter-needing CLI
+  command. Fixing it also armed and fixed a latent bug: `load` and `reparse` read *all*
+  `raw_snapshots`, so a second source's pages would have been fed to the first one's
+  parser — both queries now scope by manufacturer key.
+- **F4 · Product URLs were built from an AMACO template** — **done**.
+  `product_ref(slug)` and `external_id_for(url)` are abstract on the adapter. This also
+  killed a real divergence: the sync workflow derived external ids as the URL's last path
+  segment while the adapter used the whole path — identical for AMACO, wrong for Mayco's
+  `/product/<slug>/`. `FetchInput` no longer carries `external_id`; the fetch activity
+  derives it through the adapter.
+- **F5 · Coat ordering assumed AMACO's layout** — **done**, the minimal way.
+  `coat_order` is an adapter attribute (empty default = source never emits composites),
+  and the pipeline fails loudly if regions arrive without one. The splitter's
+  white-background detector and exactly-three refusal deliberately stay AMACO-tuned:
+  splitting was already opt-in via `interpret_image` classifying an image
+  `COATS_COMPOSITE`, and Mayco is expected to present coats as *counts* (1/2/3) via
+  filenames — still a hypothesis, no Mayco swatch fetched yet, and nothing here bets on
+  it. Overlaps E4.
+- **F6 · Change detection stripped BigCommerce noise in generic code** — **done**. The
+  measured pattern list is `AmacoAdapter.volatile_patterns` (mirroring the `Politeness`
+  precedent); the fetcher takes patterns as an argument, defaulting to stripping nothing,
+  so a source that forgets its own looks byte-new every pass — loud — instead of silently
+  borrowing BigCommerce's regexes. WordPress churns differently (nonces, cache busters),
+  so Mayco will measure its own list (F12/F14).
 - **F7 · Glaze code is not a unique identity** — **done**
   (`20260728000100_manufacturer_scoped_identity.sql`), before any Mayco row exists. Postgres
   was already correct — `glazes` has `unique (manufacturer_id, code)`
@@ -324,10 +333,15 @@ should stay. These are the ones that actually bind behaviour:
   unique constraint. Migrations are append-only, so this is a new migration either way.
   Decide whether coat level is per-manufacturer or a shared abstract scale with per-source
   labels.
-- **F9 · Tests and fixtures are single-source shaped** — **todo**.
-  `tests/fixtures/amaco/` plus `scripts/capture_fixtures.sh` assume one site. Mirror them
-  per source so `tests/test_parser.py` can cover both, and keep at least one captured Woo
-  product page as a fixture — the parser is the part guaranteed to need revision.
+- **F9 · Tests and fixtures were single-source shaped** — **done**, except the part that
+  needs Mayco to exist. `tests/fixtures/<key>/` mirrors the registry (the AMACO images
+  moved under `fixtures/amaco/images/`), conftest's helpers take a source parameter and
+  build URLs through the adapter's `product_ref`, and the source-agnostic parse invariant
+  lives in `test_source_contract.py` parametrized over `SOURCES` — a new source is covered
+  by checking in fixtures, not by copying tests. `test_parser.py` became
+  `test_amaco_parser.py` (`test_mayco_parser.py` will sit beside it), and the capture
+  script is `capture_amaco_fixtures.sh` — deliberately not parameterized, since its URL
+  shapes are BigCommerce's. Still owed with F12: at least one captured Woo product page.
 
 ### The Mayco adapter
 
@@ -576,14 +590,14 @@ Not a commitment, just the dependency-respecting reading of the above.
 2. **G1 + G3** — hosted Supabase and a tunnelled Expo Go session. Small, and it turns
    "works on my laptop" into "works on my phone", which changes how everything else gets
    tested. Run G5's spike alongside, since its answer shapes G4–G8 and H5.
-3. **Ships now, no blockers, high value** — ~~D1 header slim-down, D2 tab spike, D4 combos
-   tab from the AMACO pairs already loaded~~ (done: header, tab shell, and the pairs rail
-   as its own tab), D6 similar glazes.
+3. ~~**Ships now, no blockers, high value** — D1 header slim-down, D2 tab spike, D4 combos
+   tab from the AMACO pairs already loaded, D6 similar glazes.~~ — **done**: header, tab
+   shell, the pairs rail as its own tab, and the Similar tab.
 4. ~~**The saving rework end to end** — C3 and C4 are what remain; C1 and C2 landed with
    F7.~~ — **done**: Epic C is now C5 (publish, blocked by E1–E3) and nothing else.
-5. **Epic F proper** — F1–F9 de-AMACO-ing, then F10–F14 for the adapter, then F15 combos.
-   The abstraction is only proven once a second adapter runs through it, so do not treat
-   the cleanup as finished before Mayco loads.
+5. **Epic F proper** — ~~F1–F9 de-AMACO-ing~~ (done, minus the F8 decision), then F10–F14
+   for the adapter, then F15 combos. The abstraction is only proven once a second adapter
+   runs through it, so do not treat the cleanup as finished before Mayco loads.
 6. **Search depth** — A3, A4's wiring half, A5, A6. Mostly client work over parameters the
    RPC already accepts; A7's brand facet becomes real the moment F lands.
 7. **Explore, partially** — B3 new, B4 shell. Featured and popular wait.

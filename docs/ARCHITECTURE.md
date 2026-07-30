@@ -17,7 +17,7 @@ graph TD
   end
 
   subgraph pg["Postgres / Supabase — supabase/"]
-    rpc["RPCs: search_glazes · glaze_by_code · glaze_appearances<br/>every lookup takes (manufacturer, code)"]
+    rpc["RPCs: search_glazes · glaze_by_code · glaze_appearances · similar_glazes<br/>every lookup takes (manufacturer, code)"]
     tables["glazes · glaze_images · appearances<br/>vocabularies · parse_issues"]
     bucket["private Storage bucket<br/>image derivatives, signed URLs"]
     rpc --> tables
