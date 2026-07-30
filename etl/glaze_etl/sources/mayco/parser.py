@@ -35,6 +35,7 @@ from glaze_etl.core.models import (
     RawSnapshot,
 )
 from glaze_etl.sources.mayco.filename_grammar import normalize_sku
+from glaze_etl.sources.mayco.urls import external_id as external_id_for_slug
 from glaze_etl.sources.mayco.vocabulary import (
     BADGE_VALUES,
     CONE_UNSTATED,
@@ -223,9 +224,11 @@ def parse_product(snap: RawSnapshot) -> ParsedProduct:
 
     return ParsedProduct(
         manufacturer=ManufacturerKey.MAYCO,
-        # The permalink path, not the API URL the snapshot was fetched from: the external
-        # id identifies the product, and the API endpoint is how we happened to read it.
-        external_id=urlsplit(str(product.get("permalink") or snap.url)).path.strip("/"),
+        # The post slug, taken from the permalink rather than from the API URL the snapshot
+        # was fetched from: the external id identifies the product, and the API endpoint is
+        # only how we happened to read it. Must agree with the adapter's `external_id_for`,
+        # which is the one place that shape is decided.
+        external_id=external_id_for_slug(str(product.get("permalink") or snap.url)),
         # Likewise the human page, because this is what the app links out to and credits.
         product_url=str(product.get("permalink") or snap.url),
         code=normalize_sku(sku),

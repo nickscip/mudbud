@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from datetime import datetime
-from urllib.parse import parse_qs, urlsplit
 
 import httpx
 from selectolax.parser import HTMLParser
@@ -22,16 +21,22 @@ from glaze_etl.core.models import (
 from glaze_etl.core.source_adapter import SourceAdapter
 from glaze_etl.sources.mayco.filename_grammar import interpret_filename
 from glaze_etl.sources.mayco.parser import parse_product
+from glaze_etl.sources.mayco.urls import (
+    PRODUCT_API_URL,
+    PRODUCTS_API,
+    SITE,
+    slug_from,
+)
+from glaze_etl.sources.mayco.urls import (
+    external_id as _external_id,
+)
 from glaze_etl.sources.mayco.vocabulary import (
     CATEGORY_CONE_RANGE,
     EXCLUDED_CATEGORIES,
     FIRED_CATEGORY_ID,
 )
 
-SITE = "https://www.maycocolors.com"
 SITEMAP_INDEX_URL = f"{SITE}/sitemap_index.xml"
-PRODUCTS_API = f"{SITE}/wp-json/wc/store/v1/products"
-PRODUCT_API_URL = f"{PRODUCTS_API}?slug={{slug}}"
 
 USER_AGENT = (
     "mudbud-glaze-etl/0.1 (+https://github.com/nickscip/mudbud) "
@@ -40,25 +45,6 @@ USER_AGENT = (
 
 _ALLOWLIST_PAGE_SIZE = 100
 """The Store API's own maximum. Seven requests cover the 651 fired products."""
-
-
-def _external_id(slug: str) -> str:
-    """The permalink path, which is the product's identity on this site.
-
-    Not the API URL the bytes came from: `?slug=sw-197-fossil-rock` and
-    `/product/sw-197-fossil-rock/` are two ways to read one product, and the id has to
-    name the product. F4 exists because two copies of this logic once disagreed about
-    whether the id was a whole path or its last segment, so there is one copy.
-    """
-    return f"product/{slug.strip('/')}"
-
-
-def slug_from(url: str) -> str:
-    """Recover the slug from either shape of Mayco product URL."""
-    parts = urlsplit(url)
-    if slugs := parse_qs(parts.query).get("slug"):
-        return slugs[0].strip("/")
-    return parts.path.strip("/").removeprefix("product/").strip("/")
 
 
 def is_glaze(categories: list[dict[str, object]]) -> bool:
@@ -145,6 +131,13 @@ class MaycoAdapter(SourceAdapter):
                     "page": page,
                 },
             )
+            # WordPress answers 400 `rest_post_invalid_page_number` for the page after the
+            # last, which happens whenever the fired count is an exact multiple of the page
+            # size. AMACO's discover has the same guard for 404 on a sitemap page past the
+            # end; without it a catalog that happens to land on 700 products crashes
+            # discovery outright instead of finishing.
+            if page > 1 and response.status_code in (400, 404):
+                return slugs
             response.raise_for_status()
             products = response.json()
             if not isinstance(products, list) or not products:

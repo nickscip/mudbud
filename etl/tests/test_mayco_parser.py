@@ -312,6 +312,21 @@ class TestGallery:
         assert [i.raw_filename for i in product.images] == ["sw-999.jpg"]
 
 
+@pytest.mark.parametrize("slug", SLUGS)
+def test_the_external_id_is_usable_as_a_slug(slug: str) -> None:
+    """`Loader.upsert_glaze` binds `external_id` straight into `glazes.slug`.
+
+    So an id carrying a path — `product/s-2709-cappuccino-mint` — puts a non-slug in a column
+    named `slug`. Nothing in the app reads it today, which is exactly why this needs asserting
+    rather than noticing: it would have reached 630 rows unremarked.
+    """
+    product = parse(slug)
+    assert "/" not in product.external_id
+    # And it round-trips: the id is precisely what product_ref accepts, the invariant AMACO
+    # already has.
+    assert ADAPTER.product_ref(product.external_id).external_id == product.external_id
+
+
 def _synthetic_snapshot(body: str) -> RawSnapshot:
     """A snapshot for a payload no fixture holds, so a guard can be pinned directly."""
     return RawSnapshot(
@@ -331,7 +346,7 @@ class TestUrlIdentity:
         assert str(ref.url) == (
             "https://www.maycocolors.com/wp-json/wc/store/v1/products?slug=sw-197-fossil-rock"
         )
-        assert ref.external_id == "product/sw-197-fossil-rock"
+        assert ref.external_id == "sw-197-fossil-rock"
 
     @pytest.mark.parametrize(
         "url",
@@ -343,8 +358,12 @@ class TestUrlIdentity:
     )
     def test_external_id_is_the_same_from_either_shape(self, url: str) -> None:
         """The API endpoint is how we read the bytes; the permalink is what the product is.
-        F4 exists because two copies of this logic once disagreed."""
-        assert ADAPTER.external_id_for(url) == "product/sw-197-fossil-rock"
+        F4 exists because two copies of this logic once disagreed.
+
+        Bare slug, not the `product/…` path: `Loader.upsert_glaze` binds this to
+        `glazes.slug`, and it is also what `product_ref` accepts — the same invariant AMACO
+        has."""
+        assert ADAPTER.external_id_for(url) == "sw-197-fossil-rock"
 
     def test_round_trip(self) -> None:
         ref = ADAPTER.product_ref("cg-999-jazz-notes")
@@ -352,7 +371,7 @@ class TestUrlIdentity:
 
     def test_stray_slashes_are_tolerated(self) -> None:
         assert slug_from("/product/lilac/") == "lilac"
-        assert ADAPTER.product_ref("/lilac/").external_id == "product/lilac"
+        assert ADAPTER.product_ref("/lilac/").external_id == "lilac"
 
     def test_the_parsed_product_url_is_the_human_page(self) -> None:
         """Attribution links out to this, so it must not be the API endpoint."""
@@ -360,7 +379,7 @@ class TestUrlIdentity:
         assert str(product.product_url) == (
             "https://www.maycocolors.com/product/sw-197-fossil-rock/"
         )
-        assert product.external_id == "product/sw-197-fossil-rock"
+        assert product.external_id == "sw-197-fossil-rock"
 
 
 class TestDiscovery:
