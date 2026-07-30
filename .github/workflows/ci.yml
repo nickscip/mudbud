@@ -35,21 +35,30 @@ jobs:
         # database gets the new text, an already-migrated one keeps the old, and CI passes either
         # way. The fix is always to add another migration.
         #
-        # The base matters: a PR compares against its target branch, but a push to main must
-        # compare against what main pointed at *before* the push — against origin/main it would be
-        # comparing the branch to itself, and the check could never fire on the one branch where
-        # an edited migration has certainly already run.
+        # The base is the whole check, because it is what decides what "already run" means. Only
+        # the default branch reaches deploy-schema.yml, so a migration that has not landed there
+        # has not run anywhere and is still an ordinary file — editing it in response to review is
+        # how a migration is supposed to be written. `origin/main` is therefore the base for every
+        # branch, and three-dot against the merge base keeps migrations added to main since this
+        # branch started from reading as local edits.
+        #
+        # The exception is a push to main itself, where comparing against origin/main compares the
+        # branch to itself and the check could never fire on the one branch where an edited
+        # migration has certainly already run. There, and only there, the base is what main pointed
+        # at before the push.
         run: |
+          default="${{ github.event.repository.default_branch }}"
           if [ -n "${{ github.base_ref }}" ]; then
             git fetch --quiet origin "${{ github.base_ref }}"
             base="origin/${{ github.base_ref }}"
-          elif git cat-file -e "${{ github.event.before }}" 2>/dev/null; then
+          elif [ "${{ github.ref_name }}" = "$default" ] \
+               && git cat-file -e "${{ github.event.before }}" 2>/dev/null; then
             base="${{ github.event.before }}"
           else
-            # A brand-new branch has no before (all zeros), and a force-push may point at history
-            # this clone no longer reaches. The default branch is the only base left.
-            git fetch --quiet origin "${{ github.event.repository.default_branch }}"
-            base="origin/${{ github.event.repository.default_branch }}"
+            # Also the fallback for a push to main whose `before` this clone cannot reach — a
+            # brand-new branch has none at all, and a force-push may name history that is gone.
+            git fetch --quiet origin "$default"
+            base="origin/$default"
           fi
           scripts/check-migrations-append-only.sh "$base"
 
