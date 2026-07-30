@@ -234,6 +234,21 @@ E4 is Python work on a pipeline that already runs.
   seconds, so iteration is cheap and needs no re-crawl. F5 settled the seam question: the
   splitter stays an AMACO-layout utility a source opts into via `interpret_image`, and the
   ordinal-to-coat-level mapping lives on the adapter (`coat_order`).
+- **E6 · A text-only reparse discards measured colour** — **todo, real, found by tripping over
+  it.** `AppearanceWriter.existing_pixel_data` exists so `reparse` / `load --no-images` does not
+  destroy pixel-derived data, and its docstring says carrying it forward means "reparse updates
+  exactly what it re-derived". It only half does: the query is
+  `where a.image_id = %s and a.crop_bbox is not null` joined through `coat_levels`, so it
+  carries **split composite regions only**. An ordinary single-swatch appearance has no
+  `coat_level_id` and no crop box, so its `hex`, `hex2` and six Lab columns are deleted and not
+  restored.
+  Observed: a `load --manufacturer mayco --no-images` left all 24 Mayco appearances with
+  `hex is null` while AMACO's 1325 all have one. The visible symptom is a swatch tile with no
+  colour fallback and a glaze that drops out of any colour-distance ordering — quiet, and it
+  looks like the crawl's fault rather than the reparse's.
+  Affects AMACO identically; it has simply not had a text-only reparse since its load. The fix
+  is to carry the non-composite row's colour too, which means the query cannot require
+  `crop_bbox`.
 - **E5 · Orphan blob GC** — **todo**, small, not urgent. The uploader skips keys already in
   Storage and never deletes, so an image whose bytes change between crawls leaves its old
   renditions behind. Measured on the hosted bucket (2026-07-29): `glaze_images` references
@@ -490,9 +505,18 @@ Ordered roughly by what unblocks what — G1 gates everything.
   `workflow_dispatch`, and reads `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_DB_URL`
   from repo secrets. Its header comment records why a workflow engine is not used for a weekly
   cron, and the Temporal code it once ran under is gone — deleted rather than kept warm, since
-  the two shapes meant to bring it back (parallel manufacturers, a review gate) are a
-  `strategy.matrix` and an `environment:` here. So "deploy the ETL" is largely done — it needs
-  real secrets and a first verified remote run.
+  the two shapes meant to bring it back were a `strategy.matrix` and an `environment:` here.
+  **One of those is now real:** Epic F turned the single job into a matrix over
+  `[amaco, mayco]`, with the corpus assertions lifted into a dependent job so they run once
+  over the catalog rather than once per source. So "deploy the ETL" is largely done — it needs
+  real secrets and a first verified remote run, and that run is also what first loads Mayco
+  into the hosted project.
+  One trap worth knowing before running anything locally: **`etl/.env` points
+  `SUPABASE_DB_URL` at the hosted project**, so a bare `glaze-etl sync` on a laptop writes to
+  production. The `mayco` row being absent there is the only thing that stopped it during this
+  work — `SnapshotStore.insert` raised `LookupError` before anything was written. Overriding
+  the three `SUPABASE_*` variables per command is the current workaround; a `--local` flag or
+  a separate `.env.local` would be a better one.
 - **G3 · Remote dev loop** — **todo**, cheap, needs G1. `expo start --tunnel` plus Expo Go
   on the phone works off-network today; note that `EXPO_PUBLIC_*` values are baked into
   the bundle at build time, so switching between local and hosted Supabase is a restart,
