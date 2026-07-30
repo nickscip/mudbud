@@ -1,8 +1,8 @@
 """Runs one product through every stage.
 
-Sequencing this in one place keeps the CLI and the Temporal activities from drifting
-apart — both call `ingest_product`, and the workflow adds retries and scheduling around
-it rather than reimplementing the order of operations.
+Sequencing this in one place keeps the commands that ingest from drifting apart — `crawl`,
+`load` and `sync` all call `ingest_product` and differ only in where the snapshot came
+from, rather than each reimplementing the order of operations.
 """
 
 from __future__ import annotations

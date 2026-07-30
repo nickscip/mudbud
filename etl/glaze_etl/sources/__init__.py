@@ -1,9 +1,9 @@
 """Every source the ETL can ingest, keyed by manufacturer.
 
-Adding a source means one subclass package and one entry here — the CLI and the
-Temporal activities both resolve adapters through `adapter_for`, so nothing else
-changes. Deliberately not in `core/`: core never imports from sources (that import
-direction is enforced by a test), while this package exists to know them all.
+Adding a source means one subclass package and one entry here — every command resolves
+its adapter through `adapter_for`, so nothing else changes. Deliberately not in `core/`:
+core never imports from sources (that import direction is enforced by a test), while
+this package exists to know them all.
 """
 
 from __future__ import annotations

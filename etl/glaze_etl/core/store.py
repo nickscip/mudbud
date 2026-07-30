@@ -6,11 +6,11 @@ way to prune. That is the `SnapshotStore` Protocol, kept narrow so the Fetcher s
 testable against an in-memory double.
 
 The read-back side — replaying stored pages through the parser — is needed only by the
-CLI and the Temporal activities, both of which hold a real connection. Those methods
-live on `PostgresSnapshotStore` alone rather than on the Protocol, so the Fetcher does
-not acquire a dependency on queries it never issues. They are here, and not inlined
-into their callers, because three hand-written copies of "newest snapshot per URL" had
-already drifted apart on whether to scope by manufacturer.
+CLI commands that hold a real connection. Those methods live on `PostgresSnapshotStore`
+alone rather than on the Protocol, so the Fetcher does not acquire a dependency on
+queries it never issues. They are here, and not inlined into their callers, because
+three hand-written copies of "newest snapshot per URL" had already drifted apart on
+whether to scope by manufacturer.
 """
 
 from __future__ import annotations

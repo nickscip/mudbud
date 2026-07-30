@@ -95,8 +95,8 @@ def load_color_namer(conn: Connection) -> ColorNamer:
     """Read the seeded colour vocabulary into a namer, once per run.
 
     Beside the class it builds, mirroring `load_vocabularies` in `normalizer.py`, so
-    the table and the shape it feeds change in the same file. The CLI and the Temporal
-    activity each had their own copy of this query before.
+    the table and the shape it feeds change in the same file. Two callers each had their
+    own copy of this query before, and they had drifted.
     """
     rows = conn.execute(
         "select term, lab_l, lab_a, lab_b, max_delta_e, is_potter_term, family from color_terms"
