@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from glaze_etl.core.color import Lab, delta_e
+from glaze_etl.core.db import Connection
 
 
 @dataclass(frozen=True)
@@ -88,3 +89,33 @@ class ColorNamer:
     def _family_of(self, term: str) -> list[str]:
         family = self._families.get(term)
         return [family] if family else []
+
+
+def load_color_namer(conn: Connection) -> ColorNamer:
+    """Read the seeded colour vocabulary into a namer, once per run.
+
+    Beside the class it builds, mirroring `load_vocabularies` in `normalizer.py`, so
+    the table and the shape it feeds change in the same file. The CLI and the Temporal
+    activity each had their own copy of this query before.
+    """
+    rows = conn.execute(
+        "select term, lab_l, lab_a, lab_b, max_delta_e, is_potter_term, family from color_terms"
+    ).fetchall()
+    return ColorNamer(
+        [
+            ColorTerm(
+                str(term),
+                Lab(_as_float(lightness), _as_float(green_red), _as_float(blue_yellow)),
+                _as_float(radius),
+                bool(potter),
+                str(family) if family else None,
+            )
+            for term, lightness, green_red, blue_yellow, radius, potter, family in rows
+        ]
+    )
+
+
+def _as_float(value: object) -> float:
+    """psycopg hands back `object` for numeric columns; narrow it once, here."""
+    assert isinstance(value, int | float)
+    return float(value)

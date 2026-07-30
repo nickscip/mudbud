@@ -16,9 +16,8 @@ import psycopg
 import structlog
 import typer
 
-from glaze_etl.core.blob_store import BlobStore, LocalBlobStore, SupabaseBlobStore
-from glaze_etl.core.color import Lab
-from glaze_etl.core.color_namer import ColorNamer, ColorTerm
+from glaze_etl.core.blob_store import blob_store_for
+from glaze_etl.core.color_namer import load_color_namer
 from glaze_etl.core.config import Settings
 from glaze_etl.core.db import connect as db_connect
 from glaze_etl.core.db import stored_object_keys
@@ -205,52 +204,6 @@ def reparse(
         typer.echo("dry run: nothing written")
 
 
-def _blob_store(
-    settings: Settings,
-    blob_dir: str,
-    manufacturer: str,
-    known_keys: set[str] | None = None,
-) -> BlobStore:
-    """Prefer the hosted private bucket when configured, else the local cache.
-
-    Chosen by whether credentials exist rather than by a flag, so the same command works in
-    development and against a real project without anyone remembering to pass anything.
-
-    The bucket is per manufacturer — `mudbud_amaco` — so a second source cannot write its
-    images into the first one's bucket.
-    """
-    if settings.supabase_url and settings.secret_key:
-        bucket = settings.bucket_for(manufacturer)
-        log.info("blobs.supabase", bucket=bucket)
-        return SupabaseBlobStore(
-            settings.supabase_url, settings.secret_key, bucket, known_keys=known_keys
-        )
-    log.info("blobs.local", path=blob_dir)
-    return LocalBlobStore(Path(blob_dir))
-
-
-def _color_namer(conn: psycopg.Connection[tuple[object, ...]]) -> ColorNamer:
-    rows = conn.execute(
-        "select term, lab_l, lab_a, lab_b, max_delta_e, is_potter_term, family from color_terms"
-    ).fetchall()
-    vocabulary: list[ColorTerm] = []
-    for term, lightness, green_red, blue_yellow, radius, potter, family in rows:
-        centroid = Lab(_f(lightness), _f(green_red), _f(blue_yellow))
-        vocabulary.append(
-            ColorTerm(
-                str(term), centroid, _f(radius), bool(potter),
-                str(family) if family else None,
-            )
-        )
-    return ColorNamer(vocabulary)
-
-
-def _f(value: object) -> float:
-    """psycopg hands back `object` for numeric columns; narrow it once, here."""
-    assert isinstance(value, int | float)
-    return float(value)
-
-
 @app.command()
 def load(
     slug: Annotated[list[str] | None, typer.Argument(help="Specific slugs, or all stored.")] = None,
@@ -270,13 +223,11 @@ def load(
         with db_connect(settings.database_url) as conn:
             normalizer = Normalizer(load_vocabularies(conn))
             loader = Loader(conn, normalizer)
-            namer = _color_namer(conn)
+            namer = load_color_namer(conn)
 
             # Must byte-match what the Fetcher stored, so build URLs via the adapter.
             urls = [str(adapter.product_ref(s).url) for s in slug] if slug else None
-            snapshots = PostgresSnapshotStore(conn).newest_per_url(
-                adapter.manufacturer, urls
-            )
+            snapshots = PostgresSnapshotStore(conn).newest_per_url(adapter.manufacturer, urls)
 
             log.info("load.start", snapshots=len(snapshots), images=images)
 
@@ -287,7 +238,12 @@ def load(
                 already = stored_object_keys(conn, settings.bucket_for(adapter.manufacturer.value))
                 if already:
                     log.info("blobs.known", objects=len(already))
-                blobs = _blob_store(settings, blob_dir, adapter.manufacturer.value, already)
+                blobs = blob_store_for(
+                    settings,
+                    adapter.manufacturer.value,
+                    blob_dir=Path(blob_dir),
+                    known_keys=already,
+                )
                 # The local directory doubles as a byte cache even when blobs go to
                 # Supabase, so switching backends does not re-download the corpus.
                 media = (
@@ -351,9 +307,14 @@ def sync(
 
         with db_connect(settings.database_url) as conn:
             loader = Loader(conn, Normalizer(load_vocabularies(conn)))
-            namer = _color_namer(conn)
+            namer = load_color_namer(conn)
             already = stored_object_keys(conn, settings.bucket_for(adapter.manufacturer.value))
-            blobs = _blob_store(settings, blob_dir, adapter.manufacturer.value, already)
+            blobs = blob_store_for(
+                settings,
+                adapter.manufacturer.value,
+                blob_dir=Path(blob_dir),
+                known_keys=already,
+            )
 
             async with httpx.AsyncClient(
                 timeout=settings.request_timeout_s,

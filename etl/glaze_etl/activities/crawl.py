@@ -13,12 +13,10 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-import psycopg
 from temporalio import activity
 
-from glaze_etl.core.blob_store import BlobStore, LocalBlobStore, SupabaseBlobStore
-from glaze_etl.core.color import Lab
-from glaze_etl.core.color_namer import ColorNamer, ColorTerm
+from glaze_etl.core.blob_store import blob_store_for
+from glaze_etl.core.color_namer import load_color_namer
 from glaze_etl.core.config import Settings
 from glaze_etl.core.db import connect as db_connect
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome
@@ -139,7 +137,7 @@ async def ingest_snapshot(payload: IngestInput) -> IngestOutput:
             )
 
         loader = Loader(conn, Normalizer(load_vocabularies(conn)))
-        namer = _color_namer(conn)
+        namer = load_color_namer(conn)
 
         async with httpx.AsyncClient(
             timeout=settings.request_timeout_s,
@@ -148,7 +146,7 @@ async def ingest_snapshot(payload: IngestInput) -> IngestOutput:
             media = (
                 MediaProcessor(
                     client,
-                    _blob_store(settings, payload.manufacturer),
+                    blob_store_for(settings, payload.manufacturer),
                     byte_cache=settings.blob_dir,
                 )
                 if payload.with_images
@@ -175,41 +173,6 @@ async def finalise(manufacturer: str) -> dict[str, int]:
         conn.commit()
     activity.logger.info("finalise: %d cone ranges inherited, %d layering links", cones, links)
     return {"cone_inherited": cones, "layer_links": links}
-
-
-def _blob_store(settings: Settings, manufacturer: str) -> BlobStore:
-    """Same rule as the CLI: hosted private bucket when configured, local cache otherwise.
-
-    One bucket per manufacturer, derived — `mudbud_amaco`.
-    """
-    if settings.supabase_url and settings.secret_key:
-        return SupabaseBlobStore(
-            settings.supabase_url, settings.secret_key, settings.bucket_for(manufacturer)
-        )
-    return LocalBlobStore(settings.blob_dir)
-
-
-def _color_namer(conn: psycopg.Connection[tuple[object, ...]]) -> ColorNamer:
-    rows = conn.execute(
-        "select term, lab_l, lab_a, lab_b, max_delta_e, is_potter_term, family from color_terms"
-    ).fetchall()
-    vocabulary: list[ColorTerm] = []
-    for term, lightness, green_red, blue_yellow, radius, potter, family in rows:
-        vocabulary.append(
-            ColorTerm(
-                str(term),
-                Lab(_f(lightness), _f(green_red), _f(blue_yellow)),
-                _f(radius),
-                bool(potter),
-                str(family) if family else None,
-            )
-        )
-    return ColorNamer(vocabulary)
-
-
-def _f(value: object) -> float:
-    assert isinstance(value, int | float)
-    return float(value)
 
 
 ALL_ACTIVITIES: Sequence[Callable[..., Any]] = [
