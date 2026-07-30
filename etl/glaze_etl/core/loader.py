@@ -248,8 +248,12 @@ class Loader:
         """Coat regions already recorded for this image, with their measured colours."""
         return self._appearances.existing_pixel_data(image_id)
 
-    def replace_appearances(self, glaze_id: int, image_id: int, payload: ImagePayload) -> int:
-        written = self._appearances.replace(glaze_id, image_id, payload)
+    def replace_appearances(
+        self, glaze_id: int, image_id: int, payload: ImagePayload, *, manufacturer: str
+    ) -> int:
+        written = self._appearances.replace(
+            glaze_id, image_id, payload, manufacturer=manufacturer
+        )
         self.stats.appearances += written
         return written
 

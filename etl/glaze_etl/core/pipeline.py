@@ -136,7 +136,9 @@ async def ingest_product(
                     )
 
         image_id = loader.upsert_image(glaze_id, payload)
-        appearances += loader.replace_appearances(glaze_id, image_id, payload)
+        appearances += loader.replace_appearances(
+            glaze_id, image_id, payload, manufacturer=product.manufacturer.value
+        )
 
     if color_terms:
         loader.refresh_color_terms(glaze_id, color_terms)

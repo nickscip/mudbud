@@ -90,11 +90,16 @@ class AppearanceWriter:
             )
         return tuple(out)
 
-    def replace(self, glaze_id: int, image_id: int, payload: ImagePayload) -> int:
+    def replace(
+        self, glaze_id: int, image_id: int, payload: ImagePayload, *, manufacturer: str
+    ) -> int:
         """Rewrite this image's appearances, returning how many rows were written.
 
         Delete-then-insert rather than upsert: an appearance has no natural key, and a
         grammar improvement can legitimately change how many rows one image yields.
+
+        ``manufacturer`` is who any unresolved-token issues are filed against; the
+        payload is per-image and carries no product context of its own.
         """
         if not payload.regions and payload.lab is None:
             # No pixels were processed this run, so anything the pixels produced must be
@@ -118,7 +123,7 @@ class AppearanceWriter:
             coat_level=facts.coat_level,
         )
         for kind, value in resolved.unresolved:
-            self._record_issue("amaco", kind, payload.raw_filename, {"value": value})
+            self._record_issue(manufacturer, kind, payload.raw_filename, {"value": value})
 
         if payload.regions:
             # A resolved composite yields one row per thickness. This is the coat axis the
