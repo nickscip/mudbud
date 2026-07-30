@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import re
+
 import httpx
 import pytest
 
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome, content_hash
 from glaze_etl.core.models import ManufacturerKey, Politeness, ProductRef
 from glaze_etl.core.store import InMemorySnapshotStore
+from glaze_etl.sources.amaco.adapter import VOLATILE_PATTERNS
 
 URL = "https://shop.amaco.com/pc-20-blue-rutile/"
 REF = ProductRef(url=URL, external_id="pc-20-blue-rutile")
@@ -30,7 +33,10 @@ class FakeClock:
 
 
 def build(
-    handler: httpx.MockTransport, store: InMemorySnapshotStore | None = None
+    handler: httpx.MockTransport,
+    store: InMemorySnapshotStore | None = None,
+    *,
+    volatile_patterns: tuple[re.Pattern[str], ...] = (),
 ) -> tuple[Fetcher, InMemorySnapshotStore, FakeClock]:
     store = store or InMemorySnapshotStore()
     clock = FakeClock()
@@ -39,6 +45,7 @@ def build(
         store,
         ManufacturerKey.AMACO,
         POLITENESS,
+        volatile_patterns=volatile_patterns,
         retention=3,
         sleep=clock.sleep,
         clock=clock,
@@ -266,14 +273,20 @@ class TestCanonicalHashing:
 
     def test_canonical_hash_is_stable_across_fetches(self) -> None:
         a, b = self._bodies()
-        assert content_hash(a) == content_hash(b)
+        assert content_hash(a, VOLATILE_PATTERNS) == content_hash(b, VOLATILE_PATTERNS)
+
+    def test_default_patterns_strip_nothing(self) -> None:
+        """A source that forgets its volatile_patterns must fail loud — every fetch
+        looks byte-new — rather than silently inherit BigCommerce's regexes."""
+        a, b = self._bodies()
+        assert content_hash(a) != content_hash(b)
 
     def test_canonicalisation_leaves_product_data_alone(self) -> None:
         """It must strip analytics, not content — the JSON-LD block has to survive."""
         from glaze_etl.core.fetcher import canonicalize_for_hash
 
         a, _ = self._bodies()
-        canonical = canonicalize_for_hash(a)
+        canonical = canonicalize_for_hash(a, VOLATILE_PATTERNS)
         assert "PCF-54 Flux Blossom" in canonical
         assert "PC-70_over_PCF-54_16M_Vase_Website" in canonical
         assert "window.bodl" not in canonical
@@ -281,13 +294,14 @@ class TestCanonicalHashing:
 
     def test_a_real_content_change_still_registers(self) -> None:
         a, _ = self._bodies()
-        assert content_hash(a) != content_hash(a.replace("Flux Blossom", "Flux Renamed"))
+        renamed = a.replace("Flux Blossom", "Flux Renamed")
+        assert content_hash(a, VOLATILE_PATTERNS) != content_hash(renamed, VOLATILE_PATTERNS)
 
     async def test_repeat_fetch_of_a_noisy_page_writes_one_row(self) -> None:
         """End to end: the exact scenario that stored a duplicate before canonicalisation."""
         a, b = self._bodies()
         transport, _ = responder(httpx.Response(200, text=a), httpx.Response(200, text=b))
-        fetcher, store, _ = build(transport)
+        fetcher, store, _ = build(transport, volatile_patterns=VOLATILE_PATTERNS)
 
         first = await fetcher.fetch(REF)
         second = await fetcher.fetch(REF)

@@ -6,6 +6,7 @@ means one new subclass plus its grammar module — no stage, workflow, or table 
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from datetime import datetime
@@ -29,6 +30,13 @@ class SourceAdapter(ABC):
     """Maps a split composite's region ordinal to a coat level. The composite layout is
     source knowledge — AMACO's read thin-to-thick left to right. Empty means this source
     never classifies an image as COATS_COMPOSITE, so nothing ever consults it."""
+
+    volatile_patterns: tuple[re.Pattern[str], ...] = ()
+    """Per-request noise this source injects into otherwise-identical responses, stripped
+    before content hashing. Which byte ranges are noise is a property of the site's stack
+    (BigCommerce analytics blobs, WordPress nonces), so each source measures its own.
+    Empty strips nothing — a source that forgets this looks byte-new on every pass, which
+    is loud, rather than silently borrowing another site's regexes."""
 
     @abstractmethod
     def discover(self, since: datetime | None = None) -> AsyncIterator[ProductRef]:

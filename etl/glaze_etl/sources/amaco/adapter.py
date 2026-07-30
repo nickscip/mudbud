@@ -34,6 +34,20 @@ def _external_id(url: str) -> str:
     """AMACO's stable key is the whole URL path — a single slug segment."""
     return urlsplit(url).path.strip("/")
 
+
+# Per-request noise BigCommerce and Cloudflare inject into every response. Measured by
+# fetching the same product twice ten seconds apart: the bodies were byte-for-byte
+# identical except for these three, and nothing here is product data.
+VOLATILE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # BigCommerce's BODL analytics blob — a base64 payload holding a fresh session UUID
+    # and first-touch timestamp on every single request.
+    re.compile(r"window\.bodl\s*=\s*JSON\.parse\(decodeBase64\(\"[^\"]*\"\)\)"),
+    # Cloudflare's challenge parameters: a request ray id and an epoch stamp.
+    re.compile(r"window\.__CF\$cv\$params\s*=\s*\{[^}]*\}"),
+    # The analytics event block repeats the timestamp and a per-visit id.
+    re.compile(r"\"(?:timestamp|visit_id|session_id|event_id)\"\s*:\s*\"[^\"]*\""),
+)
+
 _GLAZE_SLUG_RE = re.compile(
     rf"^({'|'.join(c.lower() for c in GLAZE_LINE_CODES)})-\d{{1,3}}(-|$)",
 )
@@ -61,6 +75,8 @@ class AmacoAdapter(SourceAdapter):
     coat_order = (CoatLevel.LIGHT, CoatLevel.SLIGHTLY_LIGHT, CoatLevel.SLIGHTLY_HEAVY)
     """AMACO's composites read thin-to-thick left to right, three tiles per image —
     the splitter refuses anything that is not exactly three, so HEAVY never appears."""
+
+    volatile_patterns = VOLATILE_PATTERNS
 
     def __init__(self, client: httpx.AsyncClient | None = None) -> None:
         self._client = client

@@ -23,7 +23,7 @@ import asyncio
 import hashlib
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -63,39 +63,26 @@ class FetchResult:
         return self.outcome is FetchOutcome.STORED and self.snapshot is not None
 
 
-# Per-request noise BigCommerce and Cloudflare inject into every response. Measured by
-# fetching the same product twice ten seconds apart: the bodies were byte-for-byte
-# identical except for these three, and nothing here is product data.
-_VOLATILE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # BigCommerce's BODL analytics blob — a base64 payload holding a fresh session UUID
-    # and first-touch timestamp on every single request.
-    re.compile(r"window\.bodl\s*=\s*JSON\.parse\(decodeBase64\(\"[^\"]*\"\)\)"),
-    # Cloudflare's challenge parameters: a request ray id and an epoch stamp.
-    re.compile(r"window\.__CF\$cv\$params\s*=\s*\{[^}]*\}"),
-    # The analytics event block repeats the timestamp and a per-visit id.
-    re.compile(r"\"(?:timestamp|visit_id|session_id|event_id)\"\s*:\s*\"[^\"]*\""),
-)
-
-
-def canonicalize_for_hash(body: str) -> str:
+def canonicalize_for_hash(body: str, patterns: Sequence[re.Pattern[str]] = ()) -> str:
     """Strip per-request noise so the hash tracks *content*, not bytes.
 
-    Without this, change detection does not work on this site at all. BigCommerce sends
-    no ETag and ignores If-Modified-Since, so every fetch returns a fresh 200, and the
-    embedded analytics session id makes every response byte-unique. A raw byte hash
-    therefore reports every product as changed on every crawl, storing ~22MB a pass of
-    identical pages and defeating the retention budget.
+    Which byte ranges are noise is source knowledge — the adapter supplies its
+    ``volatile_patterns``. Without them, change detection did not work on AMACO at all:
+    BigCommerce sends no ETag and ignores If-Modified-Since, so every fetch returns a
+    fresh 200, and an embedded analytics session id made every response byte-unique. A
+    raw byte hash therefore reported every product as changed on every crawl, storing
+    ~22MB a pass of identical pages and defeating the retention budget.
 
     The full body is still stored verbatim — reparse needs real HTML. Only the hash sees
     the canonical form.
     """
-    for pattern in _VOLATILE_PATTERNS:
+    for pattern in patterns:
         body = pattern.sub("", body)
     return body
 
 
-def content_hash(body: str) -> str:
-    return hashlib.sha256(canonicalize_for_hash(body).encode("utf-8")).hexdigest()
+def content_hash(body: str, patterns: Sequence[re.Pattern[str]] = ()) -> str:
+    return hashlib.sha256(canonicalize_for_hash(body, patterns).encode("utf-8")).hexdigest()
 
 
 class Fetcher:
@@ -108,6 +95,7 @@ class Fetcher:
         manufacturer: ManufacturerKey,
         politeness: Politeness,
         *,
+        volatile_patterns: tuple[re.Pattern[str], ...] = (),
         retention: int = 3,
         max_attempts: int = 4,
         sleep: Sleeper | None = None,
@@ -117,6 +105,10 @@ class Fetcher:
         self._store = store
         self._manufacturer = manufacturer
         self._politeness = politeness
+        # The default strips nothing on purpose: a source that forgets its patterns
+        # looks byte-new every pass — loud — instead of silently reusing another
+        # site's regexes.
+        self._volatile_patterns = volatile_patterns
         self._retention = retention
         self._max_attempts = max_attempts
         # Injected so tests can run without wall-clock delays while still asserting
@@ -187,7 +179,7 @@ class Fetcher:
     def _record(self, ref: ProductRef, response: httpx.Response) -> FetchResult:
         url = str(ref.url)
         body = response.text
-        digest = content_hash(body)
+        digest = content_hash(body, self._volatile_patterns)
 
         previous = self._store.head(url)
         if previous is not None and previous.content_hash == digest:

@@ -107,6 +107,7 @@ async def fetch_product(payload: FetchInput) -> FetchOutput:
                 store,
                 adapter.manufacturer,
                 adapter.politeness,
+                volatile_patterns=adapter.volatile_patterns,
                 retention=settings.snapshot_retention,
                 max_attempts=settings.max_attempts,
             )
