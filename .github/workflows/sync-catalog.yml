@@ -32,6 +32,12 @@ on:
         type: boolean
         required: false
         default: true
+      manufacturer:
+        description: "Which source to crawl"
+        type: choice
+        options: [all, amaco, mayco]
+        required: false
+        default: all
 
 # Two runs at once would breach the crawl-delay each source is owed, so a run in progress is never
 # cancelled and a new one waits its turn. This bounds *runs*, not the matrix legs inside one: those
@@ -41,7 +47,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Which sources this run covers, as JSON for the matrix below. A job rather than an inline
+  # expression because the conditional is three-way, and `fromJSON` of a nested ternary is
+  # unreadable — a workflow nobody can read is one nobody will change correctly.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sources: ${{ steps.pick.outputs.sources }}
+    steps:
+      - id: pick
+        # A scheduled run carries no inputs at all, so an empty value means every source.
+        run: |
+          case "${{ github.event.inputs.manufacturer }}" in
+            ""|all) sources='["amaco","mayco"]' ;;
+            *)      sources='["${{ github.event.inputs.manufacturer }}"]' ;;
+          esac
+          echo "sources=$sources" >> "$GITHUB_OUTPUT"
+          echo "crawling: $sources" >> "$GITHUB_STEP_SUMMARY"
+
   sync:
+    needs: plan
     runs-on: ubuntu-latest
     # A full pass is ~60 min of waiting for AMACO and ~105 for Mayco; this leaves room for retries
     # without risking the 6h cap.
@@ -52,7 +78,7 @@ jobs:
       # them, and every write is scoped by manufacturer_id — `link_layering` included, which joins
       # base to subject within one brand.
       matrix:
-        manufacturer: [amaco, mayco]
+        manufacturer: ${{ fromJSON(needs.plan.outputs.sources) }}
       # A failing source must not cancel the other. Half a catalog refreshed beats none, and the
       # failure is visible either way.
       fail-fast: false
@@ -101,7 +127,7 @@ jobs:
   # leg instead of inside the matrix — where each would have re-checked the whole corpus per
   # source and reported the same numbers twice.
   verify:
-    needs: sync
+    needs: [plan, sync]
     # `always()` so a failed source still gets the corpus checked: a half-refreshed catalog is
     # exactly the state worth asserting about.
     if: always()
@@ -137,7 +163,12 @@ jobs:
         # with 50 products, and the first assertion here is "at least 300 glazes" — so running it
         # against a deliberate partial load would fail the run for doing exactly what was asked.
         # A scheduled run has no inputs at all, which is the case that matters.
-        if: github.event.inputs.limit == '' || github.event.inputs.limit == '0'
+        # Skipped for a capped run *and* for a single-source run. Both are deliberate partial
+        # loads, and the floors below judge the whole catalog: asserting them after refreshing
+        # one source would fail the run for doing exactly what was asked.
+        if: |
+          (github.event.inputs.limit == '' || github.event.inputs.limit == '0')
+          && (github.event.inputs.manufacturer == '' || github.event.inputs.manufacturer == 'all')
         working-directory: .
         env:
           DB_URL: ${{ secrets.SUPABASE_DB_URL }}
