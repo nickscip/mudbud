@@ -114,15 +114,19 @@ owned.
 - **C2 · Save control** — **done**. `MarkToggles` is now an exclusive wishlist/owned pair —
   pressing the active choice clears the mark — with favourite appearing only once owned.
   `toggleGlazeMark` split into `setGlazeMarkState` and `toggleGlazeFavorite`.
-- **C3 · Lists that are easy to reach** — **todo**. Today the only way in is three chips on
-  the search screen (`MARK_FILTERS` in `src/app/glazes/index.tsx`). Wanted: a real destination
-  with Wishlist / Owned / Favourites, reachable from navigation. Keep the server-side
-  `p_codes` / `p_code_manufacturers` approach — filtering an already-fetched page silently
-  drops anything ranked below the limit, which is the bug that migration was written to fix.
-- **C4 · Private notes on owned glazes** — **todo**. Local SQLite, same rationale as
-  marks: personal, offline, and the hosted catalog stays read-only. Either a `note` column
-  on `glaze_marks` or a `glaze_notes` table if multiple dated notes per glaze are wanted
-  (decision, see below).
+- **C3 · Lists that are easy to reach** — **done**. `/glazes/lists` is a real destination —
+  Wishlist / Owned / Favourites as segments — reached from the shelf header and the catalog
+  header. The label/predicate/empty-copy table moved to `src/lib/markFilters.ts` so the
+  search chips and the segments cannot disagree about membership. The server-side
+  `p_codes` / `p_code_manufacturers` path is kept, with `p_limit` set to the exact ref count
+  so a large collection is never truncated; order is local (`updated_at` desc), and a mark
+  whose catalog row is unreachable degrades to its denormalized name instead of vanishing.
+- **C4 · Private notes on owned glazes** — **done**, as one `note` column on `glaze_marks`
+  (decision resolved below): device schema v2, appended by `ALTER` for v1 devices and
+  carried by the v0 rebuild. `setGlazeMarkNote` enforces owned-only in the repo the way
+  favourite is; demotion to the wishlist *keeps* the note (a note is authored data, a heart
+  is a flag) and only clearing the mark deletes it, behind a confirm. The field autosaves
+  under the mark toggles on the detail screen.
 - **C5 · Publish a note** — **blocked** by E1/E2/E3. Private-by-default with an explicit
   opt-in per note. Ties into D7.
 
@@ -174,9 +178,11 @@ epic is filling the tabs out (D3–D7).
   opacity. Avoid RGB-Euclidean colour distance — that was one of the things `glazy` got
   wrong. Once F lands, cross-brand similars ("the Mayco equivalent of PC-20") become the
   most valuable version of this feature.
-- **D7 · Comments tab** — **partial / blocked**. The private half is C4 and can ship alone,
-  which is a good reason to build the tab now with one section. The public half is blocked
-  by E1/E2/E3.
+- **D7 · Comments tab** — **partial / blocked**. The private half shipped with C4, but as an
+  autosaving field under the mark toggles rather than a tab — a note about *your jar* belongs
+  next to the owned toggle, not behind a fifth tab. The public half is blocked by E1/E2/E3
+  and will need its own home when it arrives; whether that is a tab is an open layout
+  question, not settled by C4.
 
 ## Epic E — Platform prerequisites
 
@@ -530,8 +536,9 @@ Kept separate so nobody picks up a UI ticket and discovers the well is dry.
 - **Ingredients** — community-entered, out of scope, or reframed as "safety data and a link
   out" using whatever Mayco's document taxonomies actually hold?
 - **Popularity signal** — wait for accounts, or ship a curated list labelled as curated?
-- **Notes shape** — one note per owned glaze, or many dated notes? Affects whether C4 is a
-  column or a table, and whether publishing is per-note or per-glaze.
+- ~~**Notes shape** — one note per owned glaze, or many dated notes?~~ — decided with C4:
+  one note per glaze, a column on `glaze_marks`. Publishing (C5) is therefore per-glaze;
+  revisiting dated notes later is a v3 schema bump, not a redesign.
 - **Wishlist and cross-device** — do lists stay local-only (offline-first, no account), or
   does E1 sync them? The current design is deliberately local; syncing is a real reversal.
 - **Sponsorship** — is a paid featured slot actually wanted at this stage, and what does a
@@ -561,8 +568,8 @@ Not a commitment, just the dependency-respecting reading of the above.
 3. **Ships now, no blockers, high value** — ~~D1 header slim-down, D2 tab spike, D4 combos
    tab from the AMACO pairs already loaded~~ (done: header, tab shell, and the pairs rail
    as its own tab), D6 similar glazes.
-4. **The saving rework end to end** — C3 and C4 are what remain; C1 and C2 landed with F7.
-   Self-contained, local, and the thing a user touches every session.
+4. ~~**The saving rework end to end** — C3 and C4 are what remain; C1 and C2 landed with
+   F7.~~ — **done**: Epic C is now C5 (publish, blocked by E1–E3) and nothing else.
 5. **Epic F proper** — F1–F9 de-AMACO-ing, then F10–F14 for the adapter, then F15 combos.
    The abstraction is only proven once a second adapter runs through it, so do not treat
    the cleanup as finished before Mayco loads.
