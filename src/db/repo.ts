@@ -201,6 +201,10 @@ export function glazeMarkQuery(ref: GlazeRef) {
  *
  * Wishlist and owned are one choice, so this sets rather than toggles — moving between them is a
  * single write and there is no intermediate state where a glaze is both.
+ *
+ * A demotion to the wishlist keeps the note where it clears the favourite, on purpose: a note is
+ * authored data and a heart is a flag. The screens hide it while the glaze is not owned, and
+ * re-owning brings it back.
  */
 export async function setGlazeMarkState(
   ref: GlazeRef,
@@ -245,5 +249,22 @@ export async function toggleGlazeFavorite(ref: GlazeRef): Promise<void> {
   await db
     .update(glazeMarks)
     .set({ favorite: !existing.favorite, updatedAt: Date.now() })
+    .where(sameGlaze(ref));
+}
+
+/**
+ * Write the private note on a glaze already owned.
+ *
+ * Same shape as the favourite toggle and for the same reason: "notes only on owned" lives here,
+ * so no screen can conjure a note onto a wishlist row. Whitespace stores NULL rather than an
+ * empty string, so "has a note" checks stay honest.
+ */
+export async function setGlazeMarkNote(ref: GlazeRef, note: string): Promise<void> {
+  const existing = await db.query.glazeMarks.findFirst({ where: sameGlaze(ref) });
+  if (!existing || existing.state !== "owned") return;
+
+  await db
+    .update(glazeMarks)
+    .set({ note: note.trim() || null, updatedAt: Date.now() })
     .where(sameGlaze(ref));
 }

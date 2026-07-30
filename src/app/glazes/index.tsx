@@ -18,9 +18,9 @@ import { FilterChip } from "@/components/FilterChip";
 import { GlazeCard } from "@/components/GlazeCard";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { glazeRef, useGlazeSearch, type GlazeFilters, type GlazeHit } from "@/lib/glazes";
+import { MARK_FILTERS, MARK_FILTER_KEYS, type MarkFilterKey } from "@/lib/markFilters";
 import { glazeCatalogConfigured } from "@/lib/supabase";
 import { glazeMarksQuery, markKey } from "@/db/repo";
-import type { GlazeMark } from "@/db/schema";
 import { colors } from "@/theme/tokens";
 
 /** Cone presets, labelled the way a potter would say them. */
@@ -31,32 +31,6 @@ const CONE_PRESETS = [
   { label: "Cone 10", from: 32, to: 32 },
 ] as const;
 
-/**
- * The three ways to slice your own marks: what you want, what you have, what you love.
- *
- * Chip label, row predicate and empty-state wording live in one entry so a filter cannot end up
- * labelled one thing and matching another.
- */
-const MARK_FILTERS = {
-  wishlist: {
-    label: "Wishlist",
-    match: (m: GlazeMark) => m.state === "wishlist",
-    empty: "Nothing on the wishlist yet",
-  },
-  owned: {
-    label: "Owned",
-    match: (m: GlazeMark) => m.state === "owned",
-    empty: "Nothing marked owned yet",
-  },
-  favorite: {
-    label: "Favorites",
-    match: (m: GlazeMark) => m.favorite,
-    empty: "No favourites yet",
-  },
-} as const;
-
-type MarkFilter = keyof typeof MARK_FILTERS;
-
 type Section = { title: string; subtitle?: string; data: GlazeHit[] };
 
 export default function GlazeSearchScreen() {
@@ -66,7 +40,7 @@ export default function GlazeSearchScreen() {
   const [term, setTerm] = useState("");
   const [conePreset, setConePreset] = useState<number | null>(null);
   const [foodSafeOnly, setFoodSafeOnly] = useState(false);
-  const [markFilter, setMarkFilter] = useState<MarkFilter | null>(null);
+  const [markFilter, setMarkFilter] = useState<MarkFilterKey | null>(null);
 
   // Marks are local, so which glazes to ask for is decided here rather than in the RPC — the
   // catalog has no idea what you own, and should not.
@@ -174,7 +148,7 @@ export default function GlazeSearchScreen() {
             selected={foodSafeOnly}
             onPress={() => setFoodSafeOnly((on) => !on)}
           />
-          {(Object.keys(MARK_FILTERS) as MarkFilter[]).map((key) => (
+          {MARK_FILTER_KEYS.map((key) => (
             <FilterChip
               key={key}
               label={MARK_FILTERS[key].label}
