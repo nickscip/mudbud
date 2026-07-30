@@ -16,6 +16,7 @@ import { Txt } from "@/components/AppText";
 import { EmptyState } from "@/components/EmptyState";
 import { FilterChip } from "@/components/FilterChip";
 import { GlazeCard } from "@/components/GlazeCard";
+import { PressableScale } from "@/components/PressableScale";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { glazeRef, useGlazeSearch, type GlazeFilters, type GlazeHit } from "@/lib/glazes";
 import { MARK_FILTERS, MARK_FILTER_KEYS, type MarkFilterKey } from "@/lib/markFilters";
@@ -97,10 +98,24 @@ export default function GlazeSearchScreen() {
     [sections]
   );
 
+  // Your lists are one tap from the catalog because they answer the catalog's own question —
+  // "do I have this one already?" — and they are local, so the button works even when the
+  // catalog itself cannot.
+  const listsButton = (
+    <PressableScale
+      onPress={() => router.push("/glazes/lists")}
+      hitSlop={8}
+      accessibilityLabel="Your glazes"
+      className="h-10 w-10 items-center justify-center rounded-full bg-stone-50 border border-stone-200"
+    >
+      <Ionicons name="bookmark-outline" size={18} color={colors.stone[700]} />
+    </PressableScale>
+  );
+
   if (!glazeCatalogConfigured) {
     return (
       <View className="flex-1">
-        <ScreenHeader title="Glazes" />
+        <ScreenHeader title="Glazes" right={listsButton} />
         <EmptyState
           icon="cloud-offline-outline"
           title="Catalog not connected"
@@ -112,7 +127,7 @@ export default function GlazeSearchScreen() {
 
   return (
     <View className="flex-1">
-      <ScreenHeader title="Glazes" />
+      <ScreenHeader title="Glazes" right={listsButton} />
 
       <View className="px-4">
         <View className="flex-row items-center rounded-2xl bg-white px-3 border border-stone-200">

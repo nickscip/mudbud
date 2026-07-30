@@ -70,6 +70,7 @@ export default function RootLayout() {
           />
           <Stack.Screen name="entry/[id]" options={{ presentation: "modal" }} />
           <Stack.Screen name="glazes/index" />
+          <Stack.Screen name="glazes/lists" />
           <Stack.Screen name="glazes/[manufacturer]/[code]" />
         </Stack>
       </SafeAreaProvider>

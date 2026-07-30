@@ -32,24 +32,31 @@ const NO_RESULTS: SearchResults = { matches: [], near: [] };
 export function useGlazeSearch(
   term: string,
   filters: GlazeFilters,
-  { enabled = true, debounceMs = 250 }: { enabled?: boolean; debounceMs?: number } = {}
+  {
+    enabled = true,
+    debounceMs = 250,
+    limit,
+  }: { enabled?: boolean; debounceMs?: number; limit?: number } = {}
 ) {
   const [results, setResults] = useState<SearchResults>(NO_RESULTS);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const run = useCallback(async (query: string, active: GlazeFilters) => {
-    setLoading(true);
-    setError(null);
-    try {
-      setResults(await searchGlazes(query, active));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Search failed");
-      setResults(NO_RESULTS);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const run = useCallback(
+    async (query: string, active: GlazeFilters) => {
+      setLoading(true);
+      setError(null);
+      try {
+        setResults(await searchGlazes(query, active, limit));
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "Search failed");
+        setResults(NO_RESULTS);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [limit]
+  );
 
   // The ref holds the timer so a re-render mid-typing does not orphan it.
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
