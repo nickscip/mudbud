@@ -11,7 +11,7 @@ import { GlazeCard, stripCode } from "@/components/GlazeCard";
 import { PressableScale } from "@/components/PressableScale";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { SegmentedTabs } from "@/components/SegmentedTabs";
-import { useGlazeSearch, type GlazeFilters, type GlazeRef } from "@/lib/glazes";
+import { glazeRef, useGlazeSearch, type GlazeFilters, type GlazeRef } from "@/lib/glazes";
 import { MARK_FILTERS, MARK_FILTER_KEYS, type MarkFilterKey } from "@/lib/markFilters";
 import { glazeCatalogConfigured } from "@/lib/supabase";
 import { glazeMarksQuery, markKey } from "@/db/repo";
@@ -61,10 +61,7 @@ export default function GlazeListsScreen() {
   const hitsByKey = useMemo(
     () =>
       new Map(
-        [...results.matches, ...results.near].map((hit) => [
-          markKey({ manufacturer: hit.manufacturer_key, code: hit.code }),
-          hit,
-        ])
+        [...results.matches, ...results.near].map((hit) => [markKey(glazeRef(hit)), hit])
       ),
     [results]
   );

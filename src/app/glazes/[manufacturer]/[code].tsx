@@ -31,6 +31,7 @@ import {
 } from "@/lib/glazes";
 import {
   glazeMarkQuery,
+  markKey,
   setGlazeMarkNote,
   setGlazeMarkState,
   toggleGlazeFavorite,
@@ -188,8 +189,11 @@ export default function GlazeDetailScreen() {
 
           {mark?.state === "owned" ? (
             <View className="mt-3">
+              {/* Keyed so the field remounts when the glaze does: it seeds its draft once
+                  and never resyncs, so without this a new glaze would inherit the last
+                  one's text. */}
               <GlazeNoteField
-                key={`${mark.manufacturer}:${mark.code}`}
+                key={markKey(ref)}
                 note={mark.note}
                 onSave={(text) => void setGlazeMarkNote(ref, text)}
               />

@@ -106,13 +106,6 @@ export const CREATE_TABLES = `
  *   reading `favorite = 1, owned = 0` as "wanted" would invent an intent the user never expressed.
  *   Owned is what they actually pressed, and the favourite flag survives either way.
  */
-/**
- * v2 — one private note per glaze. Additive, so a plain ALTER is enough; the v0 rebuild above
- * already lands on the full current shape via GLAZE_MARKS_COLUMNS, so this only applies to a
- * table that survives as-is.
- */
-const ADD_NOTE_COLUMN = `ALTER TABLE glaze_marks ADD COLUMN note TEXT;`;
-
 const REKEY_GLAZE_MARKS = `
   CREATE TABLE glaze_marks_new (${GLAZE_MARKS_COLUMNS});
 
@@ -122,6 +115,13 @@ const REKEY_GLAZE_MARKS = `
   DROP TABLE glaze_marks;
   ALTER TABLE glaze_marks_new RENAME TO glaze_marks;
 `;
+
+/**
+ * v2 — one private note per glaze. Additive, so a plain ALTER is enough; the v1 rebuild above
+ * already lands on the full current shape via GLAZE_MARKS_COLUMNS, so this only applies to a
+ * table that survives as-is.
+ */
+const ADD_NOTE_COLUMN = `ALTER TABLE glaze_marks ADD COLUMN note TEXT;`;
 
 /**
  * What has to run to bring a database at `fromVersion` up to `SCHEMA_VERSION`.
