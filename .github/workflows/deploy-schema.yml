@@ -104,6 +104,13 @@ jobs:
         with:
           version: latest
 
+      - name: Credentials are shaped correctly
+        # Ahead of the ledger read, so a malformed DSN is named as such instead of arriving as
+        # a psql connection error that reads like the database being unreachable.
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: scripts/check-supabase-env.sh db
+
       - name: Does the database agree about its own history?
         # Reconciliation before mutation. A ledger that disagrees with the files means the next
         # `db push` is guessing — re-running a migration that already ran, or skipping one that did
