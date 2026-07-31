@@ -522,12 +522,27 @@ Ordered roughly by what unblocks what — G1 gates everything.
   over the catalog rather than once per source. So "deploy the ETL" is largely done — it needs
   real secrets and a first verified remote run, and that run is also what first loads Mayco
   into the hosted project.
+  **Both are now done** (2026-07-31). The secrets were malformed in a way that cost real
+  debugging: `SUPABASE_DB_URL` at repo level had no `postgresql://` prefix, which libpq
+  reports as `missing "=" after ...` because without a scheme it parses the string as
+  `keyword=value` pairs, and `SUPABASE_URL` had no `https://`. Both are now shape-checked
+  before use by `scripts/check-supabase-env.sh`. A dispatch against the hosted project then
+  succeeded end to end — `changed 0 unchanged 3`, and `blobs.supabase bucket=mudbud_mayco`,
+  so the Storage credential is exercised rather than merely well-formed.
+  What remains under G2 is only the scheduled run proving itself unattended.
+
   One trap worth knowing before running anything locally: **`etl/.env` points
   `SUPABASE_DB_URL` at the hosted project**, so a bare `glaze-etl sync` on a laptop writes to
   production. The `mayco` row being absent there is the only thing that stopped it during this
   work — `SnapshotStore.insert` raised `LookupError` before anything was written. Overriding
   the three `SUPABASE_*` variables per command is the current workaround; a `--local` flag or
   a separate `.env.local` would be a better one.
+
+  Secrets live on the **environments**, not at repo level, so a job without an `environment:`
+  key sees nothing and fails immediately rather than reaching a database it was never pointed
+  at. That is not hypothetical: the first `sync-catalog` dispatch had no environment, picked up
+  the repo-level DSN, and the only reason it wrote nowhere unintended is that the value
+  happened to be malformed.
 - **G3 · Remote dev loop** — **todo**, cheap, needs G1. `expo start --tunnel` plus Expo Go
   on the phone works off-network today; note that `EXPO_PUBLIC_*` values are baked into
   the bundle at build time, so switching between local and hosted Supabase is a restart,
