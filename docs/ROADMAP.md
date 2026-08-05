@@ -30,8 +30,9 @@ Facts to keep in mind while reading:
 - **`etl/.env` points `SUPABASE_DB_URL` at the hosted project, not at the local stack.** So
   a bare `glaze-etl sync` writes to production. Override the three `SUPABASE_*` variables on
   the command line for local work. This is worth knowing before the first run, not after.
-- The Expo app is **SDK 54 + Expo Go, no dev client** (`AGENTS.md`). Any item needing a
-  new native package is a spike first, not a build. G7 may reopen that constraint.
+- The Expo app is **SDK 54 with Expo Go as the physical-device loop** (`AGENTS.md`). An
+  EAS development client is verified in the iOS Simulator, but any item needing a new
+  native package remains out of scope while Expo Go compatibility matters.
 - The app points at the **hosted** Supabase (`.env.local`), which is the only project there
   is — there is no dev/prod split yet, and G1 defers that decision to G4/G6. So a phone can
   reach the backend, and a careless local ETL run reaches production (see above).
@@ -176,9 +177,9 @@ epic is filling the tabs out (D3–D7).
 - **D2 · Tab shell** — **done**, the zero-dependency way. `SegmentedTabs` + conditional
   render; Application / Combos / Photos. The pager-package question could not be answered
   without a device in hand — bundling cleanly does not prove Expo Go ships the native
-  half — so no package. What that gives up is swipe-between-tabs; revisit if G5 lifts the
-  dev-client ban. Tab state is deliberately **not** in the URL: the shareable identity is
-  the glaze, and a deep link lands on the header and the default tab.
+  half — so no package. What that gives up is swipe-between-tabs; revisit only if Expo Go
+  stops being the physical-device loop. Tab state is deliberately **not** in the URL: the
+  shareable identity is the glaze, and a deep link lands on the header and the default tab.
 - **D3 · Application tab** — **partial**. The tab itself exists now (D2); in it: the coats
   strip, the on-different-clays rail, cone. Wanted filters and their reality:
   - coat — **blocked** by E4; the columns (`coat_level`, `coat_ordinal`,
@@ -511,7 +512,7 @@ Ordered roughly by what unblocks what — G1 gates everything.
   orphan objects (see E5). Still open: the dev-vs-prod project split, deliberately
   deferred to land with G4/G6 — the hard deadline is before the first external TestFlight
   build, because retrofitting means moving live testers to a different backend.
-- **G2 · Point the sync at the hosted project** — **todo**, mostly config. The workflow
+- **G2 · Point the sync at the hosted project** — **done**. The workflow
   already exists: `.github/workflows/sync-catalog.yml` runs weekly (Monday 09:00 UTC) plus
   `workflow_dispatch`, and reads `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_DB_URL`
   from repo secrets. Its header comment records why a workflow engine is not used for a weekly
@@ -529,7 +530,9 @@ Ordered roughly by what unblocks what — G1 gates everything.
   before use by `scripts/check-supabase-env.sh`. A dispatch against the hosted project then
   succeeded end to end — `changed 0 unchanged 3`, and `blobs.supabase bucket=mudbud_mayco`,
   so the Storage credential is exercised rather than merely well-formed.
-  What remains under G2 is only the scheduled run proving itself unattended.
+  The unattended proof arrived on 2026-08-03: the scheduled run completed both matrix legs
+  (AMACO in about an hour, Mayco in about 1h45) and the dependent full-catalog data-quality job
+  passed. G2 has no remaining work.
 
   One trap worth knowing before running anything locally: **`etl/.env` points
   `SUPABASE_DB_URL` at the hosted project**, so a bare `glaze-etl sync` on a laptop writes to
@@ -543,24 +546,29 @@ Ordered roughly by what unblocks what — G1 gates everything.
   at. That is not hypothetical: the first `sync-catalog` dispatch had no environment, picked up
   the repo-level DSN, and the only reason it wrote nowhere unintended is that the value
   happened to be malformed.
-- **G3 · Remote dev loop** — **todo**, cheap, needs G1. `expo start --tunnel` plus Expo Go
-  on the phone works off-network today; note that `EXPO_PUBLIC_*` values are baked into
-  the bundle at build time, so switching between local and hosted Supabase is a restart,
-  not a runtime toggle. This is the fastest path to "test on my phone away from the
-  laptop" and is worth doing before any of the EAS work.
-- **G4 · EAS project setup** — **todo**. `eas.json`, an EAS project id, and build profiles
-  (development / preview / production). Nothing in the repo references EAS yet.
-- **G5 · Verify whether an EAS cloud build clears the Gatekeeper wall** — **spike, high
-  leverage**. The no-dev-client constraint in `AGENTS.md` came from a *local* dev build
-  dying on ExpoImage's unsigned `libavif` dylib under macOS 26. A cloud build signs on
-  Expo's machines, so it plausibly does not hit that at all. If it clears, the SDK 54 +
-  Expo Go ceiling lifts: dev client becomes viable, which unblocks Phase 2 Skia visuals
-  and Epic H's options. Answer this before committing to any Expo-Go-only workaround.
+- **G3 · Remote dev loop** — **partial**, cheap, needs G1. `npm start` now selects Expo Go
+  explicitly and `npm run start:tunnel` reaches an Expo Go tunnel. `EXPO_PUBLIC_*` values
+  are baked into the bundle at start time, so switching between local and hosted Supabase
+  requires a restart. The off-network iPhone smoke test still needs to prove login,
+  hosted catalog access, SW-214, and local SQLite persistence after restart.
+- **G4 · EAS project setup** — **partial**. The app is linked to `@nickscip/mudbud`
+  (`93c1df0f-b7c4-42ed-9664-01c9a5774aa1`), and `eas.json` defines an iOS simulator
+  development profile. Physical-device, preview, and production profiles are intentionally
+  deferred until Apple Developer Program enrollment and release planning.
+- **G5 · Verify whether an EAS cloud build clears the Gatekeeper wall** — **partial;
+  simulator spike answered**. The cloud build compiled ExpoImage and `libavif`, clearing
+  the local macOS 26 Gatekeeper failure. The first build exposed an incompatible
+  `@expo/ui` canary selected by a loose range; pinning SDK 54's `0.2.0-beta.9` produced a
+  successful build that installed, launched, connected to Metro, and loaded the hosted
+  catalog on an iOS 26.5 Simulator. A physical-device build requires Apple Developer
+  Program membership and is deliberately deferred. Expo Go compatibility remains a
+  constraint, so this result does not admit native-only packages yet.
 - **G6 · iOS beta via TestFlight** — **todo**, has real prerequisites: Apple Developer
   Program enrollment (paid, annual), a bundle identifier, and EAS-managed credentials.
   Internal testing is limited to team members and needs no review; external testing
   reaches many more people but each build goes through beta App Review. Plan for the review
-  latency, and remember every tester build needs the hosted backend from G1.
+  latency, and remember every tester build needs the hosted backend from G1. Enrollment
+  was deliberately deferred on 2026-08-05; resume only when distribution work is wanted.
 - **G7 · Android beta** — **decision**. Play internal testing, or just a shared APK from an
   EAS preview build. Cheaper and faster than the iOS path, but the app has been developed
   and tested iOS-first, so it is a scope decision rather than a freebie.
@@ -631,10 +639,10 @@ Fast loading is a hard requirement, which constrains the format more than the ar
   charcoal grey.
 - **H3 · The load-bearing constraint: photographed clay cannot be recoloured at runtime.**
   A real stop-motion frame is pixels. Tinting it per theme needs a shader, which means
-  Skia, which means a dev client — currently ruled out (and see G5). So the two honest
-  options are: **shoot two clay colourways** (two sculpts or two clay bodies, same
-  animation), or **shoot once on a controlled background and pre-render both tints at build
-  time**. Pick before the shoot, because it changes the shoot.
+  Skia, which means a dev client — still out of scope while the phone loop uses Expo Go.
+  So the two honest options are: **shoot two clay colourways** (two sculpts or two clay
+  bodies, same animation), or **shoot once on a controlled background and pre-render both
+  tints at build time**. Pick before the shoot, because it changes the shoot.
 - **H4 · Loop spec** — **decision**. Stop motion reads as stop motion partly because of its
   frame rate; something near 12 fps with a ~2 second loop is ~24 frames. Fix the frame
   count, canvas size, and loop seam before shooting, since every asset-budget number below
@@ -730,9 +738,9 @@ Kept separate so nobody picks up a UI ticket and discovers the well is dry.
 - **Cross-brand combos** — sourced combos are within one brand. Mixing brands is
   user-generated, which puts it behind E1–E3.
 - **Beta platform scope** (G6/G7) — iOS TestFlight only, or Android too?
-- **Does the project leave Expo Go?** (G5) If a cloud build clears the Gatekeeper wall,
-  the dev-client ban in `AGENTS.md` is obsolete and Phase 2 Skia and Epic H both get more
-  options. This is the single highest-leverage unknown in the document.
+- ~~**Does the project leave Expo Go?** (G5)~~ Decided 2026-08-05: not for now. Expo Go
+  remains the physical-device workflow; the EAS development client is an optional
+  simulator workflow. Revisit physical EAS builds with Apple Developer Program enrollment.
 - **Mud Bud's two colourways** (H3) — two shoots, or one shoot pre-tinted at build time?
 
 ## Suggested order
@@ -742,9 +750,9 @@ Not a commitment, just the dependency-respecting reading of the above.
 1. ~~**F7 first**, before any Mayco data exists. `(manufacturer, code)` identity is
    data-corrupting to retrofit and cheap to fix now. Fold C1's local schema change into the
    same pass.~~ — **done**, and it took C2 with it, so C1–C2 of step 4 are already in.
-2. **G1 + G3** — hosted Supabase and a tunnelled Expo Go session. Small, and it turns
-   "works on my laptop" into "works on my phone", which changes how everything else gets
-   tested. Run G5's spike alongside, since its answer shapes G4–G8 and H5.
+2. **G1 + G3** — finish the tunnelled, off-network Expo Go smoke test. The G5 simulator
+   experiment succeeded; physical development-client testing is deferred until Apple
+   Developer Program enrollment.
 3. ~~**Ships now, no blockers, high value** — D1 header slim-down, D2 tab spike, D4 combos
    tab from the AMACO pairs already loaded, D6 similar glazes.~~ — **done**: header, tab
    shell, the pairs rail as its own tab, and the Similar tab.
@@ -761,7 +769,7 @@ Not a commitment, just the dependency-respecting reading of the above.
    RPC already accepts; A7's brand facet becomes real the moment F lands.
 7. **Explore, partially** — B3 new, B4 shell. Featured and popular wait.
 8. **Epic H** — H1/H2 dark mode can start any time and is needed by everything else in the
-   epic; the shoot (H3–H7) wants G5 answered first.
+   epic; the shoot (H3–H7) must use the Expo Go-compatible asset path chosen after G5.
 9. **E4 splitter**, which retroactively lights up the coat filters in search (A8) and the
    application tab (D3).
 10. **Beta distribution** — G4, G6–G12, once there is something worth testing.

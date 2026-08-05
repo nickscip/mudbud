@@ -2,10 +2,16 @@
 
 Read the exact versioned docs at https://docs.expo.dev/versions/v54.0.0/ before writing any code.
 
-The project runs on **SDK 54 + Expo Go** — not SDK 57, and not a dev build. That was a
-deliberate pivot (App Store Expo Go only supports 54, and a local dev build hit a
-macOS 26 Gatekeeper wall on ExpoImage's unsigned `libavif` dylib). Do not add packages
-that require a dev client (React Native Skia, for one) while the Expo Go loop matters.
+The project runs on **SDK 54**, with **Expo Go as the primary physical-device loop** —
+not SDK 57. Keep Expo Go compatibility: do not add packages that require a dev client
+(React Native Skia, for one) while that loop matters.
+
+An SDK 54 EAS development client is configured and verified in the iOS Simulator via
+the `development-simulator` profile in `eas.json`. It is not the physical-device loop:
+an EAS build for an iPhone requires paid Apple Developer Program membership, which is
+deliberately deferred. Local native builds still hit the macOS 26 Gatekeeper wall on
+ExpoImage's unsigned `libavif` dylib. Use `npm start` or `npm run start:tunnel` for
+Expo Go, and `npm run start:dev-client` only for the installed simulator client.
 
 # The backend is Python
 

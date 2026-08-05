@@ -54,6 +54,12 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "93c1df0f-b7c4-42ed-9664-01c9a5774aa1"
+      }
+    },
+    "owner": "nickscip"
   }
 }
