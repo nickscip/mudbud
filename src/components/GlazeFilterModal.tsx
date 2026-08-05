@@ -173,50 +173,54 @@ export function GlazeFilterModal({
             showsVerticalScrollIndicator={false}
           >
             {options ? (
-            <>
-              <FilterSection title="Brand" hint="Choose one or more manufacturers.">
-                <OptionGrid
+              <>
+                <FilterSection
+                  title="Brand"
+                  hint="Choose one or more manufacturers."
                   options={options.manufacturers}
-                  selected={draft.manufacturerIds}
-                  onToggle={toggleManufacturer}
+                >
+                  <OptionGrid
+                    options={options.manufacturers}
+                    selected={draft.manufacturerIds}
+                    onToggle={toggleManufacturer}
+                  />
+                </FilterSection>
+
+                <LineFilterRow
+                  options={visibleLines}
+                  selected={draft.lineIds}
+                  onPress={() => {
+                    setLineQuery("");
+                    setEditingLines(true);
+                  }}
                 />
-              </FilterSection>
 
-              <LineFilterRow
-                options={visibleLines}
-                selected={draft.lineIds}
-                onPress={() => {
-                  setLineQuery("");
-                  setEditingLines(true);
-                }}
-              />
-
-              <FilterSection
-                title="Cone range"
-                hint="A glaze is included when its published range overlaps yours."
-              >
-                <Txt variant="label" className="mb-2 text-xs uppercase tracking-wide">
-                  From
-                </Txt>
-                <SingleChoiceGrid
+                <FilterSection
+                  title="Cone range"
+                  hint="A glaze is included when its published range overlaps yours."
                   options={options.cones}
-                  selected={draft.coneFrom}
-                  onSelect={(id) => setDraft((current) => withConeFrom(current, id))}
-                />
-                <Txt variant="label" className="mb-2 mt-2 text-xs uppercase tracking-wide">
-                  To
-                </Txt>
-                <SingleChoiceGrid
-                  options={options.cones}
-                  selected={draft.coneTo}
-                  onSelect={(id) => setDraft((current) => withConeTo(current, id))}
-                />
-              </FilterSection>
+                >
+                  <Txt variant="label" className="mb-2 text-xs uppercase tracking-wide">
+                    From
+                  </Txt>
+                  <SingleChoiceGrid
+                    options={options.cones}
+                    selected={draft.coneFrom}
+                    onSelect={(id) => setDraft((current) => withConeFrom(current, id))}
+                  />
+                  <Txt variant="label" className="mb-2 mt-2 text-xs uppercase tracking-wide">
+                    To
+                  </Txt>
+                  <SingleChoiceGrid
+                    options={options.cones}
+                    selected={draft.coneTo}
+                    onSelect={(id) => setDraft((current) => withConeTo(current, id))}
+                  />
+                </FilterSection>
 
-              {/* The hosted catalog currently has no surface assignments. Count-backed options
-                  make this section appear on its own when the ETL begins producing them. */}
-              {options.surfaces.length > 0 ? (
-                <FilterSection title="Surface">
+                {/* The hosted catalog currently has no surface assignments. Count-backed options
+                    make this section appear on its own when the ETL begins producing them. */}
+                <FilterSection title="Surface" options={options.surfaces}>
                   <OptionGrid
                     options={options.surfaces}
                     selected={draft.surfaceIds}
@@ -228,22 +232,20 @@ export function GlazeFilterModal({
                     }
                   />
                 </FilterSection>
-              ) : null}
 
-              <FilterSection title="Opacity">
-                <OptionGrid
-                  options={options.opacities}
-                  selected={draft.opacityIds}
-                  onToggle={(id) =>
-                    setDraft((current) => ({
-                      ...current,
-                      opacityIds: toggleFilterId(current.opacityIds, id),
-                    }))
-                  }
-                />
-              </FilterSection>
+                <FilterSection title="Opacity" options={options.opacities}>
+                  <OptionGrid
+                    options={options.opacities}
+                    selected={draft.opacityIds}
+                    onToggle={(id) =>
+                      setDraft((current) => ({
+                        ...current,
+                        opacityIds: toggleFilterId(current.opacityIds, id),
+                      }))
+                    }
+                  />
+                </FilterSection>
 
-              {visibleClayBodies.length > 0 ? (
                 <ScopedFilterSection
                   title="Clay body shown"
                   hint="Only glazes photographed on the selected clay are included."
@@ -256,32 +258,31 @@ export function GlazeFilterModal({
                     }))
                   }
                 />
-              ) : null}
-            </>
+              </>
             ) : optionsLoading ? (
-            <View className="items-center py-10">
-              <ActivityIndicator />
-              <Txt variant="caption" className="mt-3">
-                Loading catalog filters…
-              </Txt>
-            </View>
-            ) : optionsError ? (
-            <View className="my-4 rounded-2xl border border-stone-200 bg-stone-50 p-4">
-              <Txt variant="title">Catalog filters unavailable</Txt>
-              <Txt variant="caption" className="mt-1 text-sm">
-                {optionsError}
-              </Txt>
-              <PressableScale
-                onPress={onRetryOptions}
-                hitSlop={8}
-                accessibilityLabel="Retry loading catalog filters"
-                className="mt-3 self-start"
-              >
-                <Txt variant="label" className="text-clay-600">
-                  Try again
+              <View className="items-center py-10">
+                <ActivityIndicator />
+                <Txt variant="caption" className="mt-3">
+                  Loading catalog filters…
                 </Txt>
-              </PressableScale>
-            </View>
+              </View>
+            ) : optionsError ? (
+              <View className="my-4 rounded-2xl border border-stone-200 bg-stone-50 p-4">
+                <Txt variant="title">Catalog filters unavailable</Txt>
+                <Txt variant="caption" className="mt-1 text-sm">
+                  {optionsError}
+                </Txt>
+                <PressableScale
+                  onPress={onRetryOptions}
+                  hitSlop={8}
+                  accessibilityLabel="Retry loading catalog filters"
+                  className="mt-3 self-start"
+                >
+                  <Txt variant="label" className="text-clay-600">
+                    Try again
+                  </Txt>
+                </PressableScale>
+              </View>
             ) : null}
 
             <FilterSection title="Safety">
@@ -356,10 +357,8 @@ function LineFilterRow({
         ? glazeLineLabel(selectedOptions[0])
         : `${selectedOptions.length} lines selected`;
 
-  if (options.length === 0) return null;
-
   return (
-    <FilterSection title="Line">
+    <FilterSection title="Line" options={options}>
       <PressableScale
         onPress={onPress}
         accessibilityLabel={`${summary}. Open line selector`}
@@ -502,12 +501,16 @@ function LineSelector({
 function FilterSection({
   title,
   hint,
+  options,
   children,
 }: {
   title: string;
   hint?: string;
+  options?: readonly unknown[];
   children: ReactNode;
 }) {
+  if (options?.length === 0) return null;
+
   return (
     <View className="mt-5">
       <Txt variant="title" className="text-base">
@@ -615,10 +618,8 @@ function ScopedFilterSection({
     return [...grouped.entries()];
   }, [options]);
 
-  if (groups.length === 0) return null;
-
   return (
-    <FilterSection title={title} hint={hint}>
+    <FilterSection title={title} hint={hint} options={options}>
       {groups.map(([manufacturer, group]) => (
         <View key={manufacturer} className="mb-2">
           <Txt variant="label" className="mb-2 text-xs uppercase tracking-wide">
