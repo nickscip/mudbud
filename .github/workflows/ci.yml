@@ -164,6 +164,10 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Glaze filters
+        # Pure state and the hand-written RPC argument names, without a device or network.
+        run: npm run test:glaze-filters
+
       - name: Device database
         # The local schema has an upgrade path that only runs on a phone which installed the app
         # before the change, so it is the least reachable and most destructive code in src/db.

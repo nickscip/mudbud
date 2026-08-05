@@ -56,6 +56,7 @@
     "start": "expo start --go",
     "start:tunnel": "expo start --go --tunnel",
     "start:dev-client": "expo start --dev-client",
+    "test:glaze-filters": "node --experimental-strip-types scripts/test-glaze-filters.mjs",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
     "ios": "expo run:ios",

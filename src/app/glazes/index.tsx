@@ -4,7 +4,6 @@ import {
   FlatList,
   TextInput,
   View,
-  ScrollView,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -16,21 +15,21 @@ import { Txt } from "@/components/AppText";
 import { EmptyState } from "@/components/EmptyState";
 import { FilterChip } from "@/components/FilterChip";
 import { GlazeCard } from "@/components/GlazeCard";
+import { GlazeFilterModal } from "@/components/GlazeFilterModal";
 import { PressableScale } from "@/components/PressableScale";
 import { ScreenHeader } from "@/components/ScreenHeader";
-import { glazeRef, useGlazeSearch, type GlazeFilters, type GlazeHit } from "@/lib/glazes";
-import { MARK_FILTERS, MARK_FILTER_KEYS, type MarkFilterKey } from "@/lib/markFilters";
+import {
+  activeGlazeFilterCount,
+  glazeRef,
+  useGlazeFilterOptions,
+  useGlazeSearch,
+  type GlazeFilters,
+  type GlazeHit,
+} from "@/lib/glazes";
+import { MARK_FILTERS, type MarkFilterKey } from "@/lib/markFilters";
 import { glazeCatalogConfigured } from "@/lib/supabase";
 import { glazeMarksQuery, markKey } from "@/db/repo";
 import { colors } from "@/theme/tokens";
-
-/** Cone presets, labelled the way a potter would say them. */
-const CONE_PRESETS = [
-  { label: "Low fire", from: 18, to: 18 }, // cone 05
-  { label: "Cone 5", from: 27, to: 27 },
-  { label: "Cone 6", from: 28, to: 28 },
-  { label: "Cone 10", from: 32, to: 32 },
-] as const;
 
 type Section = { title: string; subtitle?: string; data: GlazeHit[] };
 
@@ -39,9 +38,9 @@ export default function GlazeSearchScreen() {
   const insets = useSafeAreaInsets();
 
   const [term, setTerm] = useState("");
-  const [conePreset, setConePreset] = useState<number | null>(null);
-  const [foodSafeOnly, setFoodSafeOnly] = useState(false);
+  const [catalogFilters, setCatalogFilters] = useState<GlazeFilters>({});
   const [markFilter, setMarkFilter] = useState<MarkFilterKey | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   // Marks are local, so which glazes to ask for is decided here rather than in the RPC — the
   // catalog has no idea what you own, and should not.
@@ -76,14 +75,11 @@ export default function GlazeSearchScreen() {
   );
 
   const filters = useMemo<GlazeFilters>(() => {
-    const preset = conePreset === null ? null : CONE_PRESETS[conePreset];
     return {
-      coneFrom: preset?.from,
-      coneTo: preset?.to,
-      foodSafeOnly,
+      ...catalogFilters,
       marks: markRefs,
     };
-  }, [conePreset, foodSafeOnly, markRefs]);
+  }, [catalogFilters, markRefs]);
 
   // A mark filter with nothing marked must show nothing, so there is no query to make.
   const nothingMarked = markFilter !== null && (filters.marks?.length ?? 0) === 0;
@@ -91,6 +87,13 @@ export default function GlazeSearchScreen() {
   const { results, loading, error, retry } = useGlazeSearch(term, filters, {
     enabled: glazeCatalogConfigured && !nothingMarked,
   });
+  const {
+    options: filterOptions,
+    loading: filterOptionsLoading,
+    error: filterOptionsError,
+    retry: retryFilterOptions,
+  } = useGlazeFilterOptions({ enabled: glazeCatalogConfigured });
+  const activeFilterCount = activeGlazeFilterCount(catalogFilters, markFilter !== null);
 
   const sections = useMemo<Section[]>(() => {
     const out: Section[] = [];
@@ -162,34 +165,13 @@ export default function GlazeSearchScreen() {
           {loading ? <ActivityIndicator size="small" color={colors.stone[400]} /> : null}
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          className="mt-3 -mx-4 px-4"
-          contentContainerStyle={{ paddingRight: 16 }}
-        >
-          {CONE_PRESETS.map((preset, index) => (
-            <FilterChip
-              key={preset.label}
-              label={preset.label}
-              selected={conePreset === index}
-              onPress={() => setConePreset(conePreset === index ? null : index)}
-            />
-          ))}
+        <View className="mt-3 flex-row">
           <FilterChip
-            label="Food safe"
-            selected={foodSafeOnly}
-            onPress={() => setFoodSafeOnly((on) => !on)}
+            label={activeFilterCount ? `Filters (${activeFilterCount})` : "Filters"}
+            selected={activeFilterCount > 0}
+            onPress={() => setFiltersOpen(true)}
           />
-          {MARK_FILTER_KEYS.map((key) => (
-            <FilterChip
-              key={key}
-              label={MARK_FILTERS[key].label}
-              selected={markFilter === key}
-              onPress={() => setMarkFilter(markFilter === key ? null : key)}
-            />
-          ))}
-        </ScrollView>
+        </View>
       </View>
 
       {error ? (
@@ -267,6 +249,23 @@ export default function GlazeSearchScreen() {
           }
         />
       )}
+
+      {filtersOpen ? (
+        <GlazeFilterModal
+          filters={catalogFilters}
+          markFilter={markFilter}
+          options={filterOptions}
+          optionsLoading={filterOptionsLoading}
+          optionsError={filterOptionsError}
+          onRetryOptions={retryFilterOptions}
+          onCancel={() => setFiltersOpen(false)}
+          onApply={(nextFilters, nextMarkFilter) => {
+            setCatalogFilters(nextFilters);
+            setMarkFilter(nextMarkFilter);
+            setFiltersOpen(false);
+          }}
+        />
+      ) : null}
     </View>
   );
 }

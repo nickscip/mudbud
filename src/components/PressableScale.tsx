@@ -1,5 +1,10 @@
 import { type ReactNode } from "react";
-import { Pressable, type StyleProp, type ViewStyle } from "react-native";
+import {
+  Pressable,
+  type AccessibilityState,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -18,6 +23,7 @@ type Props = {
   hitSlop?: number;
   /** Required for icon-only controls, which otherwise announce as an unlabelled button. */
   accessibilityLabel?: string;
+  accessibilityState?: AccessibilityState;
 };
 
 /**
@@ -35,6 +41,7 @@ export function PressableScale({
   style,
   hitSlop,
   accessibilityLabel,
+  accessibilityState,
 }: Props) {
   const scale = useSharedValue(1);
   const animatedStyle = useAnimatedStyle(() => ({
@@ -47,6 +54,7 @@ export function PressableScale({
       hitSlop={hitSlop}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
+      accessibilityState={accessibilityState}
       onPressIn={() => {
         scale.value = withSpring(0.96, { damping: 18, stiffness: 320 });
       }}

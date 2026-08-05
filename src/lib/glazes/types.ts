@@ -108,8 +108,12 @@ export type GlazeAppearance = {
 };
 
 export type GlazeFilters = {
+  manufacturerIds?: number[];
+  lineIds?: number[];
   coneFrom?: number;
   coneTo?: number;
+  surfaceIds?: number[];
+  opacityIds?: number[];
   foodSafeOnly?: boolean;
   clayBodyIds?: number[];
   /**
@@ -130,3 +134,38 @@ export type SearchResults = {
 };
 
 export type ConeOption = { id: number; name: string };
+
+/** A vocabulary row that can only be offered when at least one catalog row uses it. */
+export type FilterOption = {
+  id: number;
+  name: string;
+  backingCount: number;
+};
+
+export type ManufacturerOption = FilterOption & {
+  key: string;
+};
+
+export type KeyedFilterOption = FilterOption & {
+  key: string;
+};
+
+/** Lines and clay bodies belong to one manufacturer, so their labels never have to guess. */
+export type ManufacturerScopedOption = FilterOption & {
+  manufacturerId: number;
+  manufacturerName: string;
+  code: string;
+};
+
+export type ClayBodyOption = ManufacturerScopedOption & {
+  colorFamily: string;
+};
+
+export type GlazeFilterOptions = {
+  manufacturers: ManufacturerOption[];
+  lines: ManufacturerScopedOption[];
+  cones: ConeOption[];
+  surfaces: KeyedFilterOption[];
+  opacities: KeyedFilterOption[];
+  clayBodies: ClayBodyOption[];
+};

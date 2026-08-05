@@ -20,7 +20,12 @@ type Props = {
  */
 export function FilterChip({ label, selected, onPress }: Props) {
   return (
-    <PressableScale onPress={onPress} haptic={selected ? false : undefined}>
+    <PressableScale
+      onPress={onPress}
+      haptic={selected ? false : undefined}
+      accessibilityLabel={label}
+      accessibilityState={{ selected: Boolean(selected) }}
+    >
       <View
         className="mr-2 rounded-pill px-3.5 py-2"
         style={{

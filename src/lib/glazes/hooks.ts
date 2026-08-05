@@ -9,10 +9,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { fetchAppearances, fetchGlaze, fetchSimilarGlazes, searchGlazes } from "./catalog";
+import {
+  fetchAppearances,
+  fetchGlaze,
+  fetchGlazeFilterOptions,
+  fetchSimilarGlazes,
+  searchGlazes,
+} from "./catalog";
 import { groupAppearances } from "./grouping";
 import type {
   GlazeAppearance,
+  GlazeFilterOptions,
   GlazeFilters,
   GlazeHit,
   GlazeRef,
@@ -20,6 +27,45 @@ import type {
 } from "./types";
 
 const NO_RESULTS: SearchResults = { matches: [], near: [] };
+
+/** Load the small controlled vocabularies once per mounted catalog screen. */
+export function useGlazeFilterOptions({ enabled = true }: { enabled?: boolean } = {}) {
+  const [options, setOptions] = useState<GlazeFilterOptions | null>(null);
+  const [loading, setLoading] = useState(enabled);
+  const [error, setError] = useState<string | null>(null);
+  const latest = useRef(0);
+
+  const run = useCallback(async () => {
+    const ticket = ++latest.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await fetchGlazeFilterOptions();
+      if (ticket === latest.current) setOptions(next);
+    } catch (caught) {
+      if (ticket === latest.current) {
+        setError(caught instanceof Error ? caught.message : "Could not load filters");
+      }
+    } finally {
+      if (ticket === latest.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) {
+      latest.current += 1;
+      setLoading(false);
+      return;
+    }
+    void run();
+    return () => {
+      latest.current += 1;
+    };
+  }, [enabled, run]);
+
+  const retry = useCallback(() => void run(), [run]);
+  return { options, loading, error, retry };
+}
 
 /**
  * Search as the user types.
