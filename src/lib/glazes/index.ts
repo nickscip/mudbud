@@ -7,5 +7,6 @@
 
 export * from "./types";
 export * from "./catalog";
+export * from "./filterState";
 export * from "./grouping";
 export * from "./hooks";

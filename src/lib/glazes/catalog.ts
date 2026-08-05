@@ -7,13 +7,19 @@
 
 import { supabase } from "../supabase";
 import type {
+  ClayBodyOption,
   ConeOption,
+  GlazeFilterOptions,
   GlazeAppearance,
   GlazeFilters,
   GlazeHit,
   GlazeRef,
+  KeyedFilterOption,
+  ManufacturerOption,
+  ManufacturerScopedOption,
   SearchResults,
 } from "./types";
+import { buildSearchGlazesParams, onlyPopulatedOptions } from "./filterState";
 
 /**
  * Search the catalog. Returns all matches first, then nearest matches.
@@ -26,21 +32,10 @@ export async function searchGlazes(
   filters: GlazeFilters = {},
   limit = 40
 ): Promise<SearchResults> {
-  const { data, error } = await supabase.rpc("search_glazes", {
-    q: query.trim() || null,
-    p_cone_from: filters.coneFrom ?? null,
-    p_cone_to: filters.coneTo ?? null,
-    p_food_safe: filters.foodSafeOnly ? true : null,
-    p_clay_body: filters.clayBodyIds?.length ? filters.clayBodyIds : null,
-    // Two arrays matched by position, which is what the RPC unnests in step. Sending one
-    // without the other matches nothing server-side rather than matching every brand, so the
-    // pair is built in one place and never split.
-    p_codes: filters.marks?.length ? filters.marks.map((m) => m.code) : null,
-    p_code_manufacturers: filters.marks?.length
-      ? filters.marks.map((m) => m.manufacturer)
-      : null,
-    p_limit: limit,
-  });
+  const { data, error } = await supabase.rpc(
+    "search_glazes",
+    buildSearchGlazesParams(query, filters, limit)
+  );
 
   if (error) throw new Error(error.message);
 
@@ -108,4 +103,146 @@ export async function fetchCones(): Promise<ConeOption[]> {
     .order("id");
   if (error) throw new Error(error.message);
   return (data ?? []) as ConeOption[];
+}
+
+type CountRelation = Array<{ count: number }>;
+
+const relationCount = (relation: CountRelation | null | undefined): number =>
+  relation?.[0]?.count ?? 0;
+
+/**
+ * Fetch every controlled vocabulary the search UI can use.
+ *
+ * Counts are deliberately part of these reads. A seeded vocabulary is only a set of words;
+ * offering one that no glaze or appearance uses turns a successful filter tap into a guaranteed
+ * empty result. The counts are static catalog-wide hints, not the live result count A5 still owes.
+ */
+export async function fetchGlazeFilterOptions(): Promise<GlazeFilterOptions> {
+  const [
+    manufacturersResult,
+    linesResult,
+    conesResult,
+    surfacesResult,
+    opacitiesResult,
+    clayResult,
+  ] = await Promise.all([
+      supabase.from("manufacturers").select("id,key,name,glazes(count)").order("name"),
+      supabase
+        .from("glaze_lines")
+        .select("id,manufacturer_id,code,name,glazes(count)")
+        .order("name"),
+      supabase.from("cones").select("id,name").order("id"),
+      supabase.from("surfaces").select("id,key,name,glazes(count)").order("name"),
+      supabase.from("opacities").select("id,key,name,glazes(count)").order("name"),
+      supabase
+        .from("clay_bodies")
+        .select("id,manufacturer_id,code,name,color_family,appearances(count)")
+        .order("name"),
+    ]);
+
+  const error = [
+    manufacturersResult.error,
+    linesResult.error,
+    conesResult.error,
+    surfacesResult.error,
+    opacitiesResult.error,
+    clayResult.error,
+  ].find(Boolean);
+  if (error) throw new Error(error.message);
+
+  const manufacturerRows = (manufacturersResult.data ?? []) as Array<{
+    id: number;
+    key: string;
+    name: string;
+    glazes: CountRelation;
+  }>;
+  const manufacturerNames = new Map(
+    manufacturerRows.map((manufacturer) => [manufacturer.id, manufacturer.name])
+  );
+
+  const manufacturers = onlyPopulatedOptions(
+    manufacturerRows.map<ManufacturerOption>((manufacturer) => ({
+      id: manufacturer.id,
+      key: manufacturer.key,
+      name: manufacturer.name,
+      backingCount: relationCount(manufacturer.glazes),
+    }))
+  );
+
+  const lines = onlyPopulatedOptions(
+    ((linesResult.data ?? []) as Array<{
+      id: number;
+      manufacturer_id: number;
+      code: string;
+      name: string;
+      glazes: CountRelation;
+    }>).map<ManufacturerScopedOption>((line) => ({
+      id: line.id,
+      manufacturerId: line.manufacturer_id,
+      manufacturerName: manufacturerNames.get(line.manufacturer_id) ?? "Unknown manufacturer",
+      code: line.code,
+      name: line.name,
+      backingCount: relationCount(line.glazes),
+    }))
+  ).sort(
+    (a, b) =>
+      a.manufacturerName.localeCompare(b.manufacturerName) || a.name.localeCompare(b.name)
+  );
+
+  const keyedOptions = (
+    rows: Array<{ id: number; key: string; name: string; glazes: CountRelation }>
+  ): KeyedFilterOption[] =>
+    onlyPopulatedOptions(
+      rows.map((row) => ({
+        id: row.id,
+        key: row.key,
+        name: row.name,
+        backingCount: relationCount(row.glazes),
+      }))
+    );
+
+  const clayBodies = onlyPopulatedOptions(
+    ((clayResult.data ?? []) as Array<{
+      id: number;
+      manufacturer_id: number;
+      code: string;
+      name: string;
+      color_family: string;
+      appearances: CountRelation;
+    }>).map<ClayBodyOption>((clay) => ({
+      id: clay.id,
+      manufacturerId: clay.manufacturer_id,
+      manufacturerName: manufacturerNames.get(clay.manufacturer_id) ?? "Unknown manufacturer",
+      code: clay.code,
+      name: clay.name,
+      colorFamily: clay.color_family,
+      backingCount: relationCount(clay.appearances),
+    }))
+  ).sort(
+    (a, b) =>
+      a.manufacturerName.localeCompare(b.manufacturerName) || a.name.localeCompare(b.name)
+  );
+
+  return {
+    manufacturers,
+    lines,
+    cones: (conesResult.data ?? []) as ConeOption[],
+    surfaces: keyedOptions(
+      (surfacesResult.data ?? []) as Array<{
+        id: number;
+        key: string;
+        name: string;
+        glazes: CountRelation;
+      }>
+    ),
+    opacities: keyedOptions(
+      (opacitiesResult.data ?? []) as Array<{
+        id: number;
+        key: string;
+        name: string;
+        glazes: CountRelation;
+      }>
+    ),
+    clayBodies,
+  };
 }

@@ -49,7 +49,7 @@ Facts to keep in mind while reading:
 ## Epic A — Search
 
 Goal: searching by *name or code* and searching by *feature* are two different intents;
-today they share one text box and four chips.
+the text field now owns the first and the filter modal owns the second.
 
 - **A1 · Exact match on name and code** — **done**.
   `search_glazes` handles `PC-20` and glaze names, with a match/near tier split
@@ -57,28 +57,35 @@ today they share one text box and four chips.
 - **A2 · Feature search — colour** — **done**. Colour families exist precisely because
   `websearch_to_tsquery` ANDs its terms, so "sage green" reaches a glaze whose measured
   colour earned "sage" (`20260726000400_color_families.sql`).
-- **A3 · Feature search — texture, opacity, line** — **partial, client-side only**.
-  `p_surface`, `p_opacity` and `p_line` are already RPC parameters over seeded vocabulary
-  tables (only `line_id` and the cone columns actually carry indexes — immaterial at 352
-  rows behind the LIMIT fence, worth revisiting when Mayco lands).
-  Nothing in `GlazeFilters` carries them, `catalog.ts` never sends them, and
-  there is no UI. Also needs vocabulary fetch helpers — `fetchCones` is the only one that
-  exists, so surfaces / opacities / lines have no list to build chips from.
-  "Type" is ambiguous — see Open decisions.
-- **A4 · Filter set worth the name** — **todo**, in two halves.
-  - *Wiring only* (RPC already takes it): line, surface, opacity, manufacturer, full cone
-    range instead of 4 presets, and `clayBodyIds` — which is already in `GlazeFilters`
-    (`src/lib/glazes/types.ts:107`) and already sent by `catalog.ts`, but no screen ever
-    sets it. Clay body is a genuine pottery filter axis sitting half-built.
+- **A3 · Feature search — texture, opacity, line** — **partial: line and opacity shipped;
+  surface is client-ready but has no populated data**. `GlazeFilters` carries all three,
+  `catalog.ts` sends the existing RPC arrays, and the count-backed vocabulary loader omits
+  choices with no catalog rows behind them. That last rule matters: measured against the hosted
+  catalog when this shipped, all three seeded surface rows had a backing count of zero, so the
+  Surface section stays hidden rather than turning a tap into a guaranteed empty result. It will
+  appear without another UI change once the ETL populates `glazes.surface_id`.
+  "Type" remains ambiguous — see Open decisions.
+- **A4 · Filter set worth the name** — **partial: wiring half done**, in two halves.
+  - *Wiring only* — **done**: line, surface, opacity, manufacturer, all 36 ordered cones as a
+    real range instead of four presets, and `clayBodyIds`. The app sends the existing RPC
+    parameters, multi-selects OR within a facet and ANDs across facets, and prunes hidden
+    line/clay selections when a manufacturer choice makes them impossible. Vocabulary choices
+    are count-backed, so the nine seeded clay bodies become the three that actually have
+    appearance evidence rather than six dead ends.
   - *Needs new RPC parameters*: price range (`price_min` / `price_max`), in-stock
     (`availability`), `is_dipping` / `is_brushing`, and the fuller safety set
     (`dinnerware_safe`, `food_safe_under_glaze`, `lead_free`, `prop65`). All are columns on
     `glazes`; none is a filter yet. Note the lesson in that migration's header comment:
     **add a parameter by dropping and recreating, not by overloading** — a second overload
     makes Postgres refuse to choose and breaks every existing call.
-- **A5 · Filter UX** — **todo**. A horizontal chip rail does not survive 8+ facets. Needs a
-  filter sheet with a result count, clear-all, and state that survives navigating into a
-  glaze and back. Bottom-sheet library choice is a spike (Expo Go constraint).
+- **A5 · Filter UX** — **partial**. The mixed horizontal rail is gone; one active-facet-count
+  chip opens a React Native page-sheet modal with draft/Apply semantics, clear-all, labelled
+  per-facet rows, and state that survives navigating into a glaze and back. The 43-value Line
+  facet opens its own searchable vertical list instead of another horizontal rail; feed slugs are
+  hidden there while useful short catalog codes remain. It uses only React Native primitives, so
+  Expo Go stays the physical-device loop. Still owed: a live result count in the sheet. Revisit
+  the presentation only if a real bottom sheet improves the device UX enough to justify its Expo
+  Go compatibility spike.
 - **A6 · Pagination** — **todo**, medium rather than small. `p_offset` exists server-side
   and the client never sends it; `limit` is hardcoded to 40 in `searchGlazes`. The client
   half is the real work: results are split into match/near tiers, so appended pages must
@@ -86,11 +93,10 @@ today they share one text box and four chips.
   wholesale and needs an accumulate mode, and its effect keys on the `filters` object
   identity — page state has to stay memoized or every page fetch re-fires the debounce.
   Every facet added to A4 makes the invisible cap more misleading.
-- **A7 · Brand facet** — **unblocked, still todo.** Epic F landed the second manufacturer,
-  so cardinality is no longer 1 and a brand chip finally discriminates. `p_manufacturer` and
-  `manufacturer_key` were always ready; what is new is that `glaze_hit` now also carries
-  `manufacturer_name`, so the chip can be labelled with the brand's own name rather than an
-  uppercased key. Client wiring only.
+- **A7 · Brand facet** — **done.** The filter vocabulary reads `manufacturers.name`, so the
+  choices are labelled `AMACO (American Art Clay Co.)` and `Mayco` rather than manufactured by
+  uppercasing database keys. Multi-select sends manufacturer ids through the existing
+  `p_manufacturer` array and narrows the dependent line/clay choices in the same draft.
 - **A8 · Coat / application filters in search** — **blocked** by E4 (splitter).
 - **A9 · The `glaze_hit` projection is written twice** — **todo**, small, and cheaper than it
   used to be. `search_glazes` and `glaze_by_code` repeat the same 24-column select list and the
@@ -766,8 +772,10 @@ Not a commitment, just the dependency-respecting reading of the above.
    them the seam being *tested* rather than the seam being wrong: `conftest` learned that a
    stored body need not be HTML, `glaze_hit` gained two columns, and the app stopped
    spelling brands by uppercasing a key. What remains in the epic is F8 (+F8a) and F15/F16.
-6. **Search depth** — A3, A4's wiring half, A5, A6. Mostly client work over parameters the
-   RPC already accepts; A7's brand facet becomes real the moment F lands.
+6. **Search depth** — A3's line/opacity client work, A4's wiring half and A7 are done; surface
+   waits on populated data. A5 now has the Expo Go-safe modal shell but still needs a live result
+   count. A6 pagination is the next client-side correctness gap, because every added facet makes
+   the invisible 40-row cap more misleading.
 7. **Explore, partially** — B3 new, B4 shell. Featured and popular wait.
 8. **Epic H** — H1/H2 dark mode can start any time and is needed by everything else in the
    epic; the shoot (H3–H7) must use the Expo Go-compatible asset path chosen after G5.
