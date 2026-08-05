@@ -6,18 +6,41 @@ read-only **glaze catalog** scraped from the manufacturers.
 
 How the halves fit together: [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Run it on your iPhone (no Xcode needed)
+## Run it in Expo Go (no Xcode needed)
 
 1. Install the **Expo Go** app from the App Store on your iPhone.
 2. In this folder on your Mac:
    ```bash
-   npx expo start
+   npm start
    ```
 3. Scan the QR code in the terminal with your iPhone camera → the app opens in Expo Go,
    with live reload as you edit.
 
-> Your Mac and iPhone must be on the same Wi-Fi. If the LAN connection is blocked,
-> run `npx expo start --tunnel`.
+> Your Mac and iPhone must be on the same Wi-Fi. To connect from another network,
+> run `npm run start:tunnel`.
+
+Installing `expo-dev-client` normally makes Expo CLI prefer a custom client. These commands
+pass `--go` explicitly so the zero-build Expo Go loop remains the default.
+
+## Run the EAS simulator client
+
+The optional SDK 54 development client is built on Expo's macOS workers because local native
+builds on macOS 26 cannot read ExpoImage's quarantined `libavif` framework. Build or rebuild
+the simulator app with:
+
+```bash
+npx --yes eas-cli@21.5.0 build --platform ios --profile development-simulator
+```
+
+After installing the build in the iOS Simulator, start Metro with:
+
+```bash
+npm run start:dev-client
+```
+
+This profile is simulator-only. Physical-device development clients and TestFlight are
+deferred until Apple Developer Program enrollment. Expo Go remains the phone workflow, so
+native-only packages are still out of scope while that compatibility matters.
 
 ## What's here
 

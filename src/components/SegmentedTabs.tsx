@@ -19,7 +19,7 @@ type Props<K extends string> = {
  * SDK 54 bundle. It cannot be answered from a laptop — a package that bundles cleanly can
  * still need native code Expo Go does not ship — so the shell is a segmented control plus
  * conditional render, which needs nothing new. What that gives up is swipe-between-tabs;
- * revisit if G5's cloud-build spike lifts the dev-client ban.
+ * revisit only if Expo Go stops being the physical-device loop.
  *
  * Same pill geometry as FilterChip and MarkToggles so the three read as one family, but
  * inverted: the group carries the fill and the selected segment lifts out of it in

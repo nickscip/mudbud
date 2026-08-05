@@ -1,0 +1,14 @@
+{
+  "cli": {
+    "version": ">= 21.5.0"
+  },
+  "build": {
+    "development-simulator": {
+      "developmentClient": true,
+      "environment": "development",
+      "ios": {
+        "simulator": true
+      }
+    }
+  }
+}
