@@ -547,10 +547,11 @@ Ordered roughly by what unblocks what — G1 gates everything.
   the repo-level DSN, and the only reason it wrote nowhere unintended is that the value
   happened to be malformed.
 - **G3 · Remote dev loop** — **partial**, cheap, needs G1. `npm start` now selects Expo Go
-  explicitly and `npm run start:tunnel` reaches an Expo Go tunnel. `EXPO_PUBLIC_*` values
-  are baked into the bundle at start time, so switching between local and hosted Supabase
-  requires a restart. The off-network iPhone smoke test still needs to prove login,
-  hosted catalog access, SW-214, and local SQLite persistence after restart.
+  explicitly. `npm run start:tunnel` was exercised: Expo CLI selected Expo Go and issued
+  an `exp.direct` tunnel URL. `EXPO_PUBLIC_*` values are baked into the bundle at start
+  time, so switching between local and hosted Supabase requires a restart. The off-network
+  iPhone smoke test still needs to prove login, hosted catalog access, SW-214, and local
+  SQLite persistence after restart.
 - **G4 · EAS project setup** — **partial**. The app is linked to `@nickscip/mudbud`
   (`93c1df0f-b7c4-42ed-9664-01c9a5774aa1`), and `eas.json` defines an iOS simulator
   development profile. Physical-device, preview, and production profiles are intentionally

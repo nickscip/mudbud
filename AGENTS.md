@@ -3,8 +3,8 @@
 Read the exact versioned docs at https://docs.expo.dev/versions/v54.0.0/ before writing any code.
 
 The project runs on **SDK 54**, with **Expo Go as the primary physical-device loop** —
-not SDK 57. Keep Expo Go compatibility: do not add packages that require a dev client
-(React Native Skia, for one) while that loop matters.
+not SDK 57. Keep Expo Go compatibility: app code must not depend on native modules that
+Expo Go does not ship (React Native Skia, for one) while that loop matters.
 
 An SDK 54 EAS development client is configured and verified in the iOS Simulator via
 the `development-simulator` profile in `eas.json`. It is not the physical-device loop:
@@ -12,6 +12,11 @@ an EAS build for an iPhone requires paid Apple Developer Program membership, whi
 deliberately deferred. Local native builds still hit the macOS 26 Gatekeeper wall on
 ExpoImage's unsigned `libavif` dylib. Use `npm start` or `npm run start:tunnel` for
 Expo Go, and `npm run start:dev-client` only for the installed simulator client.
+`expo-dev-client` is installed solely for that simulator build and is inert under `--go`.
+
+Keep `@expo/ui` pinned to exact version `0.2.0-beta.9`, without `~`: SDK 54's suggested
+range admits an incompatible canary. `expo install @expo/ui` and `expo install --fix`
+may restore the unsafe range, so restore the exact pin before committing either command.
 
 # The backend is Python
 
