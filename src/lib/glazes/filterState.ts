@@ -20,6 +20,7 @@ export type SearchGlazesParams = {
   p_codes: string[] | null;
   p_code_manufacturers: string[] | null;
   p_limit: number;
+  p_offset: number;
 };
 
 const populated = (ids: number[] | undefined): number[] | null =>
@@ -41,7 +42,8 @@ export function glazeLineLabel(
 export function buildSearchGlazesParams(
   query: string,
   filters: GlazeFilters,
-  limit: number
+  limit: number,
+  offset = 0
 ): SearchGlazesParams {
   return {
     q: query.trim() || null,
@@ -60,6 +62,7 @@ export function buildSearchGlazesParams(
       ? filters.marks.map((mark) => mark.manufacturer)
       : null,
     p_limit: limit,
+    p_offset: offset,
   };
 }
 

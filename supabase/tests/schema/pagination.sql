@@ -68,6 +68,7 @@ declare
   plan          jsonb;
   candidates    int;
   page_size     int := 40;
+  page_offset   int;
   agg_loops     int;
   seq_scans     int;
 begin
@@ -77,39 +78,50 @@ begin
   end if;
 
   -- A bare browse is the worst case: every glaze is a candidate, so the gap between "aggregate
-  -- all" and "aggregate the page" is the whole catalog.
-  execute 'explain (analyze, format json) select * from search_glazes(null, p_limit := '
-          || page_size || ')'
-    into plan;
+  -- all" and "aggregate the page" is the whole catalog. Assert both the first page and a deep
+  -- page: A6 is the first caller that makes a nonzero offset part of the ordinary path.
+  foreach page_offset in array array[0, 960] loop
+    execute format(
+      'explain (analyze, format json) '
+      'select * from search_glazes(null, p_limit := %s, p_offset := %s)',
+      page_size,
+      page_offset
+    ) into plan;
 
-  -- How many times the appearance lookup actually ran. Under the correct shape this is bounded by
-  -- the page size; under the old shape it was the candidate count.
-  select coalesce(max((node ->> 'Actual Loops')::int), 0) into agg_loops
-  from jsonb_path_query(plan, '$.** ? (@."Relation Name" == "appearances")') as node;
+    -- How many times the appearance lookup actually ran. Under the correct shape this is bounded
+    -- by the page size; under the old shape it was the candidate count.
+    select coalesce(max((node ->> 'Actual Loops')::int), 0) into agg_loops
+    from jsonb_path_query(plan, '$.** ? (@."Relation Name" == "appearances")') as node;
 
-  if agg_loops > page_size then
-    raise exception
-      'appearances was read % times for a %-row page over % candidates; the LIMIT is no longer a '
-      'fence — check that search_glazes still selects the page before joining evidence',
-      agg_loops, page_size, candidates;
-  end if;
+    if agg_loops > page_size then
+      raise exception
+        'appearances was read % times for a %-row page at offset % over % candidates; the LIMIT is '
+        'no longer a fence — check that search_glazes still selects the page before joining evidence',
+        agg_loops, page_size, page_offset, candidates;
+    end if;
 
-  if agg_loops = 0 then
-    raise exception 'the plan never touched appearances; this assertion is not measuring anything';
-  end if;
+    if agg_loops = 0 then
+      raise exception
+        'the offset-% plan never touched appearances; this assertion is not measuring anything',
+        page_offset;
+    end if;
 
-  -- Whatever the shape, evidence gathering must stay indexed. A sequential scan of `appearances`
-  -- per page is the other way this query goes quadratic.
-  select count(*) into seq_scans
-  from jsonb_path_query(plan, '$.**{0 to 40} ? (@."Node Type" == "Seq Scan")') as node
-  where node ->> 'Relation Name' = 'appearances';
+    -- Whatever the shape, evidence gathering must stay indexed. A sequential scan of
+    -- `appearances` per page is the other way this query goes quadratic.
+    select count(*) into seq_scans
+    from jsonb_path_query(plan, '$.**{0 to 40} ? (@."Node Type" == "Seq Scan")') as node
+    where node ->> 'Relation Name' = 'appearances';
 
-  if seq_scans > 0 then
-    raise exception 'appearances is being sequentially scanned; appearances_glaze_idx is not in use';
-  end if;
+    if seq_scans > 0 then
+      raise exception
+        'appearances is being sequentially scanned at offset %; appearances_glaze_idx is not in use',
+        page_offset;
+    end if;
 
-  raise notice
-    'pagination: % candidates, %-row page, appearances read % times', candidates, page_size, agg_loops;
+    raise notice
+      'pagination: % candidates, %-row page at offset %, appearances read % times',
+      candidates, page_size, page_offset, agg_loops;
+  end loop;
 end $$;
 
 -- Rolled back so the other tests in this directory keep their own assumptions — search_smoke.sql

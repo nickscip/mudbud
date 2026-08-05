@@ -67,6 +67,7 @@ check("maps every client facet onto the existing RPC names", () => {
       p_codes: ["PC-20", "SW-214"],
       p_code_manufacturers: ["amaco", "mayco"],
       p_limit: 40,
+      p_offset: 0,
     }
   );
 });
@@ -85,6 +86,7 @@ check("normalizes blank text and empty selections to null", () => {
     p_codes: null,
     p_code_manufacturers: null,
     p_limit: 12,
+    p_offset: 0,
   });
 });
 

@@ -8,5 +8,6 @@
 export * from "./types";
 export * from "./catalog";
 export * from "./filterState";
+export * from "./pagination";
 export * from "./grouping";
 export * from "./hooks";

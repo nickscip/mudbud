@@ -283,6 +283,41 @@ begin
   raise notice 'manufacturer-scoped identity: all assertions passed';
 end $$;
 
+-- Empty browse gives every row the same tier and rank, and two manufacturers above deliberately
+-- share a code. It is therefore the strongest pagination fixture: the final id tie-break must
+-- decide page membership, not merely restack rows after the page was chosen. Reassembling every
+-- two-row page must yield the exact catalog, in order, with neither gaps nor overlap.
+do $$
+declare
+  expected_ids bigint[];
+  page_0       bigint[];
+  page_1       bigint[];
+  page_2       bigint[];
+  actual_ids   bigint[];
+begin
+  select array_agg(g.id order by g.code, g.id) into expected_ids
+  from glazes g;
+
+  select coalesce(array_agg(id order by code, id), '{}'::bigint[]) into page_0
+  from search_glazes(null, p_limit := 2, p_offset := 0);
+  select coalesce(array_agg(id order by code, id), '{}'::bigint[]) into page_1
+  from search_glazes(null, p_limit := 2, p_offset := 2);
+  select coalesce(array_agg(id order by code, id), '{}'::bigint[]) into page_2
+  from search_glazes(null, p_limit := 2, p_offset := 4);
+
+  actual_ids := page_0 || page_1 || page_2;
+  if actual_ids is distinct from expected_ids then
+    raise exception 'paged browse returned ids %, expected exact catalog %',
+      actual_ids, expected_ids;
+  end if;
+  if cardinality(actual_ids) <> 5 then
+    raise exception 'paged browse returned % rows, expected exact count 5',
+      cardinality(actual_ids);
+  end if;
+
+  raise notice 'search pagination: exact five-row browse passed';
+end $$;
+
 -- similar_glazes.
 --
 -- The fixture geometry every assertion below leans on, written out because the scores are only
