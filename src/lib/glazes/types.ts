@@ -133,6 +133,12 @@ export type SearchResults = {
   near: GlazeHit[];
 };
 
+/** One visible page plus the cursor facts the hook needs to ask for the next one. */
+export type SearchPage = SearchResults & {
+  hasMore: boolean;
+  nextOffset: number;
+};
+
 export type ConeOption = { id: number; name: string };
 
 /** A vocabulary row that can only be offered when at least one catalog row uses it. */

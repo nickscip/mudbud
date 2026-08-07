@@ -20,6 +20,7 @@ export type SearchGlazesParams = {
   p_codes: string[] | null;
   p_code_manufacturers: string[] | null;
   p_limit: number;
+  p_offset: number;
 };
 
 const populated = (ids: number[] | undefined): number[] | null =>
@@ -41,7 +42,8 @@ export function glazeLineLabel(
 export function buildSearchGlazesParams(
   query: string,
   filters: GlazeFilters,
-  limit: number
+  limit: number,
+  offset = 0
 ): SearchGlazesParams {
   return {
     q: query.trim() || null,
@@ -60,7 +62,18 @@ export function buildSearchGlazesParams(
       ? filters.marks.map((mark) => mark.manufacturer)
       : null,
     p_limit: limit,
+    p_offset: offset,
   };
+}
+
+/** Build one visible page plus the extra row that proves another page exists. */
+export function buildSearchPageParams(
+  query: string,
+  filters: GlazeFilters,
+  limit: number,
+  offset = 0
+): SearchGlazesParams {
+  return buildSearchGlazesParams(query, filters, limit + 1, offset);
 }
 
 /** Toggle one id without leaving empty arrays that the RPC would interpret ambiguously. */

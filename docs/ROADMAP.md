@@ -86,13 +86,21 @@ the text field now owns the first and the filter modal owns the second.
   Expo Go stays the physical-device loop. Still owed: a live result count in the sheet. Revisit
   the presentation only if a real bottom sheet improves the device UX enough to justify its Expo
   Go compatibility spike.
-- **A6 · Pagination** — **todo**, medium rather than small. `p_offset` exists server-side
-  and the client never sends it; `limit` is hardcoded to 40 in `searchGlazes`. The client
-  half is the real work: results are split into match/near tiers, so appended pages must
-  merge per-tier (a page boundary can land mid-tier), `useGlazeSearch` replaces results
-  wholesale and needs an accumulate mode, and its effect keys on the `filters` object
-  identity — page state has to stay memoized or every page fetch re-fires the debounce.
-  Every facet added to A4 makes the invisible cap more misleading.
+- **A6 · Pagination** — **partial; implemented locally, hosted rollout pending.** Catalog search
+  now requests 40 visible rows plus one sentinel, advances by exactly the visible count, merges
+  match/near tiers independently, deduplicates ids, terminates zero-new-id loops, and exposes a
+  guarded infinite-scroll footer with append-only retry. Its request generation is keyed by
+  canonical query content rather than filter object identity, so note autosaves do not reset an
+  accumulated browse; stale append results, errors, and cleanup are ticket-guarded. Append-only
+  migration `20260805000100` makes `(tier, rank, code, id)` a total order in both the page CTE and
+  final result. Pure client tests cover the sentinel/cursor formula and merge behavior; schema
+  tests reconstruct an exact collision-heavy browse and retain the aggregation fence at offsets
+  0 and 960. Local schema replay, typecheck, device DB tests, and iOS export pass. The hosted ledger
+  agrees through the prior migration and reports only `20260805000100` as intentionally
+  unrecorded. Still owed before **done**: commit and deploy that migration only through
+  `deploy-schema.yml`, then prove exactly 982 rows / 982 unique ids / 25 pages (22 on the last) and
+  the 435-match-plus-one-near `blue` boundary on hosted data. OFFSET is accepted at today’s scale;
+  replace it with keyset pagination before 10,000 rows or more-than-weekly catalog writes.
 - **A7 · Brand facet** — **done.** The filter vocabulary reads `manufacturers.name`, so the
   choices are labelled `AMACO (American Art Clay Co.)` and `Mayco` rather than manufactured by
   uppercasing database keys. Multi-select sends manufacturer ids through the existing

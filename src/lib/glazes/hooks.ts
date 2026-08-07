@@ -17,6 +17,7 @@ import {
   searchGlazes,
 } from "./catalog";
 import { groupAppearances } from "./grouping";
+import { mergeSearchPage, searchRequestKey } from "./pagination";
 import type {
   GlazeAppearance,
   GlazeFilterOptions,
@@ -84,9 +85,37 @@ export function useGlazeSearch(
     limit,
   }: { enabled?: boolean; debounceMs?: number; limit?: number } = {}
 ) {
+  const pageSize = limit ?? 40;
   const [results, setResults] = useState<SearchResults>(NO_RESULTS);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+
+  const requestKey = useMemo(
+    () => searchRequestKey(term, filters, pageSize),
+    [term, filters, pageSize]
+  );
+
+  // Mutable mirrors let a burst of onEndReached events see a write synchronously, before React
+  // commits the corresponding state update. They also let a delayed callback prove it still
+  // belongs to the canonical request key that created it.
+  const activeRequest = useRef({
+    key: requestKey,
+    term,
+    filters,
+    pageSize,
+    enabled,
+  });
+  activeRequest.current = { key: requestKey, term, filters, pageSize, enabled };
+  const resultsRef = useRef<SearchResults>(NO_RESULTS);
+  const hasMoreRef = useRef(false);
+  const loadingRef = useRef(false);
+  const loadingMoreRef = useRef(false);
+  const loadMoreErrorRef = useRef<string | null>(null);
+  const nextOffsetRef = useRef(0);
+  const appendTicketRef = useRef<number | null>(null);
 
   // Which request is allowed to write. The two hooks below guard with an effect-local
   // `cancelled` flag, which is not enough here: `retry` calls `run` from outside the effect, so
@@ -96,47 +125,188 @@ export function useGlazeSearch(
   // filters wholesale and nothing follows to fix the result.
   const latest = useRef(0);
 
-  const run = useCallback(
-    async (query: string, active: GlazeFilters) => {
-      const ticket = ++latest.current;
-      setLoading(true);
-      setError(null);
-      try {
-        const next = await searchGlazes(query, active, limit);
-        if (ticket === latest.current) setResults(next);
-      } catch (caught) {
-        if (ticket === latest.current) {
-          setError(caught instanceof Error ? caught.message : "Search failed");
-          setResults(NO_RESULTS);
-        }
-      } finally {
-        if (ticket === latest.current) setLoading(false);
+  const runFirstPage = useCallback(async (expectedKey: string) => {
+    const active = activeRequest.current;
+    if (!active.enabled || active.key !== expectedKey) return;
+
+    const ticket = ++latest.current;
+    nextOffsetRef.current = 0;
+    loadingRef.current = true;
+    setLoading(true);
+    setError(null);
+    try {
+      const page = await searchGlazes(active.term, active.filters, {
+        limit: active.pageSize,
+        offset: 0,
+      });
+      if (
+        ticket === latest.current &&
+        activeRequest.current.enabled &&
+        activeRequest.current.key === expectedKey
+      ) {
+        const next = { matches: page.matches, near: page.near };
+        resultsRef.current = next;
+        setResults(next);
+        nextOffsetRef.current = page.nextOffset;
+        hasMoreRef.current = page.hasMore;
+        setHasMore(page.hasMore);
+        loadMoreErrorRef.current = null;
+        setLoadMoreError(null);
       }
-    },
-    [limit]
-  );
+    } catch (caught) {
+      if (
+        ticket === latest.current &&
+        activeRequest.current.enabled &&
+        activeRequest.current.key === expectedKey
+      ) {
+        const nextError = caught instanceof Error ? caught.message : "Search failed";
+        resultsRef.current = NO_RESULTS;
+        setResults(NO_RESULTS);
+        nextOffsetRef.current = 0;
+        hasMoreRef.current = false;
+        setHasMore(false);
+        setError(nextError);
+      }
+    } finally {
+      if (
+        ticket === latest.current &&
+        activeRequest.current.enabled &&
+        activeRequest.current.key === expectedKey
+      ) {
+        loadingRef.current = false;
+        setLoading(false);
+      }
+    }
+  }, []);
+
+  const runNextPage = useCallback(async (retrying: boolean, expectedKey: string) => {
+    const active = activeRequest.current;
+    const loadedHitCount =
+      resultsRef.current.matches.length + resultsRef.current.near.length;
+    if (
+      !active.enabled ||
+      active.key !== expectedKey ||
+      !hasMoreRef.current ||
+      loadingRef.current ||
+      loadingMoreRef.current ||
+      (!retrying && loadMoreErrorRef.current !== null) ||
+      loadedHitCount === 0 ||
+      appendTicketRef.current !== null
+    ) {
+      return;
+    }
+
+    const offset = nextOffsetRef.current;
+    const ticket = ++latest.current;
+    appendTicketRef.current = ticket;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    loadMoreErrorRef.current = null;
+    setLoadMoreError(null);
+
+    try {
+      const page = await searchGlazes(active.term, active.filters, {
+        limit: active.pageSize,
+        offset,
+      });
+      if (
+        ticket === latest.current &&
+        activeRequest.current.enabled &&
+        activeRequest.current.key === expectedKey
+      ) {
+        const merged = mergeSearchPage(resultsRef.current, page);
+        resultsRef.current = merged.results;
+        setResults(merged.results);
+        nextOffsetRef.current = page.nextOffset;
+        hasMoreRef.current = merged.hasMore;
+        setHasMore(merged.hasMore);
+      }
+    } catch (caught) {
+      if (
+        ticket === latest.current &&
+        activeRequest.current.enabled &&
+        activeRequest.current.key === expectedKey
+      ) {
+        const nextError = caught instanceof Error ? caught.message : "Could not load more";
+        loadMoreErrorRef.current = nextError;
+        setLoadMoreError(nextError);
+      }
+    } finally {
+      if (
+        ticket === latest.current &&
+        activeRequest.current.enabled &&
+        activeRequest.current.key === expectedKey
+      ) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
+      if (appendTicketRef.current === ticket) appendTicketRef.current = null;
+    }
+  }, []);
 
   // The ref holds the timer so a re-render mid-typing does not orphan it.
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    // A request key or enabled transition starts a new generation immediately. Rows stay visible
+    // while the debounce and replacement request run, but no old page may append to them.
+    latest.current += 1;
+    appendTicketRef.current = null;
+    nextOffsetRef.current = 0;
+    hasMoreRef.current = false;
+    setHasMore(false);
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
+    loadMoreErrorRef.current = null;
+    setLoadMoreError(null);
+    setError(null);
+
     if (!enabled) {
-      // Retires any request already in flight as well as clearing what is shown, or a result
-      // fetched while the caller still wanted one would land afterwards and undo this.
-      latest.current += 1;
+      resultsRef.current = NO_RESULTS;
       setResults(NO_RESULTS);
+      loadingRef.current = false;
+      setLoading(false);
       return;
     }
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => void run(term, filters), debounceMs);
+    loadingRef.current = true;
+    setLoading(true);
+    const expectedKey = requestKey;
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      void runFirstPage(expectedKey);
+    }, debounceMs);
     return () => {
       if (timer.current) clearTimeout(timer.current);
+      latest.current += 1;
     };
-  }, [term, filters, run, enabled, debounceMs]);
+  }, [requestKey, runFirstPage, enabled, debounceMs]);
 
-  const retry = useCallback(() => void run(term, filters), [run, term, filters]);
+  const retry = useCallback(() => {
+    const active = activeRequest.current;
+    if (active.enabled) void runFirstPage(active.key);
+  }, [runFirstPage]);
+  const loadMore = useCallback(
+    () => void runNextPage(false, requestKey),
+    [requestKey, runNextPage]
+  );
+  const retryLoadMore = useCallback(
+    () => void runNextPage(true, requestKey),
+    [requestKey, runNextPage]
+  );
 
-  return { results, loading, error, retry };
+  return {
+    requestKey,
+    results,
+    loading,
+    error,
+    retry,
+    hasMore,
+    loadingMore,
+    loadMoreError,
+    loadMore,
+    retryLoadMore,
+  };
 }
 
 /**

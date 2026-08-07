@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -32,10 +32,14 @@ import { glazeMarksQuery, markKey } from "@/db/repo";
 import { colors } from "@/theme/tokens";
 
 type Section = { title: string; subtitle?: string; data: GlazeHit[] };
+type ListItem =
+  | { kind: "header"; section: Section }
+  | { kind: "row"; glaze: GlazeHit };
 
 export default function GlazeSearchScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const listRef = useRef<FlatList<ListItem>>(null);
 
   const [term, setTerm] = useState("");
   const [catalogFilters, setCatalogFilters] = useState<GlazeFilters>({});
@@ -84,7 +88,18 @@ export default function GlazeSearchScreen() {
   // A mark filter with nothing marked must show nothing, so there is no query to make.
   const nothingMarked = markFilter !== null && (filters.marks?.length ?? 0) === 0;
 
-  const { results, loading, error, retry } = useGlazeSearch(term, filters, {
+  const {
+    requestKey,
+    results,
+    loading,
+    error,
+    retry,
+    hasMore,
+    loadingMore,
+    loadMoreError,
+    loadMore,
+    retryLoadMore,
+  } = useGlazeSearch(term, filters, {
     enabled: glazeCatalogConfigured && !nothingMarked,
   });
   const {
@@ -110,7 +125,7 @@ export default function GlazeSearchScreen() {
     return out;
   }, [results]);
 
-  const flat = useMemo(
+  const flat = useMemo<ListItem[]>(
     () =>
       sections.flatMap((section) => [
         { kind: "header" as const, section },
@@ -118,6 +133,14 @@ export default function GlazeSearchScreen() {
       ]),
     [sections]
   );
+  const loadedHitCount = results.matches.length + results.near.length;
+  const previousRequestKey = useRef(requestKey);
+
+  useEffect(() => {
+    if (previousRequestKey.current === requestKey) return;
+    previousRequestKey.current = requestKey;
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, [requestKey]);
 
   // Your lists are one tap from the catalog because they answer the catalog's own question —
   // "do I have this one already?" — and they are local, so the button works even when the
@@ -184,6 +207,7 @@ export default function GlazeSearchScreen() {
         />
       ) : (
         <FlatList
+          ref={listRef}
           data={flat}
           keyExtractor={(item) =>
             item.kind === "header" ? `h-${item.section.title}` : `g-${item.glaze.id}`
@@ -194,6 +218,18 @@ export default function GlazeSearchScreen() {
             paddingBottom: insets.bottom + 24,
           }}
           keyboardShouldPersistTaps="handled"
+          onEndReached={() => {
+            if (
+              hasMore &&
+              !loading &&
+              !loadingMore &&
+              !loadMoreError &&
+              loadedHitCount > 0
+            ) {
+              loadMore();
+            }
+          }}
+          onEndReachedThreshold={0.5}
           renderItem={({ item }) => {
             if (item.kind === "header") {
               return (
@@ -246,6 +282,28 @@ export default function GlazeSearchScreen() {
                 }
               />
             )
+          }
+          ListFooterComponent={
+            loadingMore ? (
+              <View className="items-center py-5">
+                <ActivityIndicator size="small" color={colors.clay[500]} />
+              </View>
+            ) : loadMoreError ? (
+              <View className="items-center py-5">
+                <Txt variant="caption" className="text-center text-xs">
+                  Couldn't load more glazes.
+                </Txt>
+                <PressableScale
+                  onPress={retryLoadMore}
+                  hitSlop={8}
+                  className="mt-2 rounded-pill bg-stone-50 px-4 py-2 border border-stone-200"
+                >
+                  <Txt variant="label" className="text-xs text-clay-600">
+                    Try again
+                  </Txt>
+                </PressableScale>
+              </View>
+            ) : null
           }
         />
       )}

@@ -17,33 +17,31 @@ import type {
   KeyedFilterOption,
   ManufacturerOption,
   ManufacturerScopedOption,
-  SearchResults,
+  SearchPage,
 } from "./types";
-import { buildSearchGlazesParams, onlyPopulatedOptions } from "./filterState";
+import { buildSearchPageParams, onlyPopulatedOptions } from "./filterState";
+import { searchPageFromRows } from "./pagination";
 
 /**
- * Search the catalog. Returns all matches first, then nearest matches.
+ * Search one visible catalog page. Returns matches first, then nearest matches.
  *
- * Both tiers come back in one round trip and are split here, so the list renders without
- * a second query and without an N+1 for each hit's photo summary.
+ * Both tiers and one pagination sentinel come back in one round trip. The sentinel is removed
+ * here before the tiers reach the list, without adding an N+1 for each hit's photo summary.
  */
 export async function searchGlazes(
   query: string,
   filters: GlazeFilters = {},
-  limit = 40
-): Promise<SearchResults> {
+  { limit = 40, offset = 0 }: { limit?: number; offset?: number } = {}
+): Promise<SearchPage> {
   const { data, error } = await supabase.rpc(
     "search_glazes",
-    buildSearchGlazesParams(query, filters, limit)
+    buildSearchPageParams(query, filters, limit, offset)
   );
 
   if (error) throw new Error(error.message);
 
   const hits = (data ?? []) as GlazeHit[];
-  return {
-    matches: hits.filter((h) => h.tier === "match"),
-    near: hits.filter((h) => h.tier === "near"),
-  };
+  return searchPageFromRows(hits, offset, limit);
 }
 
 export async function fetchAppearances(ref: GlazeRef): Promise<GlazeAppearance[]> {
