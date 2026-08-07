@@ -63,7 +63,9 @@ insert into appearances (glaze_id, image_id, cone_id, coat_level_id, clay_body_i
                          form_id, hex, confidence)
 select g.id, i.id,
        (select id from cones where name='6'),
-       (select id from coat_levels where key='slightly_light'),
+       (select cl.id
+        from coat_levels cl join manufacturers m on m.id = cl.manufacturer_id
+        where m.key = 'amaco' and cl.key = 'slightly_light'),
        (select id from clay_bodies where code = case g.code
           when 'PC-20' then '32'   -- Dark Chocolate
           else '25' end),          -- White Art Clay

@@ -182,7 +182,7 @@ end $$;
 -- Seeded by migration rather than by the ETL, so they are part of the schema contract. Each
 -- assertion here is an invariant some other code silently depends on.
 do $$
-declare n int;
+declare n int; got text; want text;
 begin
 
 -- Cone names are not numbers, and the whole cone-range filter rests on the id order: 05 is far
@@ -205,26 +205,78 @@ if exists (
   raise exception 'clay_bodies.manufacturer_id became nullable; vocabulary scoping regressed';
 end if;
 
--- coat_levels is the counter-example, asserted so F8 is decided rather than discovered. It is
--- global — no manufacturer_id at all — and its `ordinal` is `not null unique`, so Mayco's
--- "1 coat / 2 coats / 3 coats" cannot be inserted without taking an ordinal AMACO is not using
--- (semantically wrong, since ordinal means position on one scale) or dropping the constraint.
--- Both of these fail loudly when F8 lands, which is the intent: the test is a reminder that the
--- decision has consequences here, not an objection to making it.
-if exists (
+-- F8 decided coat levels are manufacturer vocabulary, not a universal scale. AMACO's
+-- qualitative thickness words and Mayco's brush-coat counts may share ordinal positions for
+-- display, but equal ordinals do not assert equal physical application. Ownership is therefore
+-- required and both identities are unique only within that owner.
+if not exists (
   select 1 from information_schema.columns
   where table_name = 'coat_levels' and column_name = 'manufacturer_id'
+    and is_nullable = 'NO'
 ) then
-  raise exception 'coat_levels gained manufacturer_id; F8 was decided — update this test';
+  raise exception 'coat_levels.manufacturer_id is missing or nullable';
+end if;
+
+if not exists (
+  select 1 from pg_constraint
+  where conrelid = 'coat_levels'::regclass and contype = 'f'
+    and confrelid = 'manufacturers'::regclass
+    and conkey = array[(select attnum from pg_attribute
+                        where attrelid = 'coat_levels'::regclass
+                          and attname = 'manufacturer_id')]
+) then
+  raise exception 'coat_levels.manufacturer_id is not a foreign key to manufacturers';
 end if;
 
 if not exists (
   select 1 from pg_constraint
   where conrelid = 'coat_levels'::regclass and contype = 'u'
-    and conkey = array[(select attnum from pg_attribute
-                        where attrelid = 'coat_levels'::regclass and attname = 'ordinal')]
+    and conkey = array[
+      (select attnum from pg_attribute where attrelid = 'coat_levels'::regclass
+         and attname = 'manufacturer_id'),
+      (select attnum from pg_attribute where attrelid = 'coat_levels'::regclass
+         and attname = 'key')]
 ) then
-  raise exception 'coat_levels.ordinal lost its unique constraint; F8 was decided — update this test';
+  raise exception 'coat_levels is not unique on (manufacturer_id, key)';
+end if;
+
+if not exists (
+  select 1 from pg_constraint
+  where conrelid = 'coat_levels'::regclass and contype = 'u'
+    and conkey = array[
+      (select attnum from pg_attribute where attrelid = 'coat_levels'::regclass
+         and attname = 'manufacturer_id'),
+      (select attnum from pg_attribute where attrelid = 'coat_levels'::regclass
+         and attname = 'ordinal')]
+) then
+  raise exception 'coat_levels is not unique on (manufacturer_id, ordinal)';
+end if;
+
+if exists (
+  select 1 from pg_constraint
+  where conrelid = 'coat_levels'::regclass and contype = 'u'
+    and conkey in (
+      array[(select attnum from pg_attribute where attrelid = 'coat_levels'::regclass
+               and attname = 'key')],
+      array[(select attnum from pg_attribute where attrelid = 'coat_levels'::regclass
+               and attname = 'ordinal')]
+    )
+) then
+  raise exception 'coat_levels still has a global key or ordinal unique constraint';
+end if;
+
+select string_agg(
+         m.key || ':' || cl.key || ':' || cl.name || ':' || cl.ordinal,
+         ', ' order by m.key, cl.ordinal
+       ) into got
+from coat_levels cl join manufacturers m on m.id = cl.manufacturer_id;
+
+want := 'amaco:light:Light coat:1, amaco:slightly_light:Slightly light coat:2, '
+     || 'amaco:slightly_heavy:Slightly heavy coat:3, amaco:heavy:Heavy coat:4, '
+     || 'mayco:1:1 coat:1, mayco:2:2 coats:2, mayco:3:3 coats:3, mayco:4:4 coats:4';
+
+if got is distinct from want then
+  raise exception E'coat level seeds changed.\n  got:  %\n  want: %', got, want;
 end if;
 
 raise notice 'contract: vocabulary invariants hold';

@@ -56,7 +56,7 @@ select g.id, img.id, (select id from cones where name = '6'), cl.id, '#6e9068', 
 from glazes g
 join glaze_lines l on l.id = g.line_id
 join glaze_images img on img.glaze_id = g.id
-join coat_levels cl on true
+join coat_levels cl on cl.manufacturer_id = g.manufacturer_id
 where l.code = 'BULK';
 
 analyze glazes;
