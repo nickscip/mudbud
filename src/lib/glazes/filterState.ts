@@ -66,6 +66,16 @@ export function buildSearchGlazesParams(
   };
 }
 
+/** Build one visible page plus the extra row that proves another page exists. */
+export function buildSearchPageParams(
+  query: string,
+  filters: GlazeFilters,
+  limit: number,
+  offset = 0
+): SearchGlazesParams {
+  return buildSearchGlazesParams(query, filters, limit + 1, offset);
+}
+
 /** Toggle one id without leaving empty arrays that the RPC would interpret ambiguously. */
 export function toggleFilterId(
   ids: number[] | undefined,

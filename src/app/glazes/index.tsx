@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -89,6 +89,7 @@ export default function GlazeSearchScreen() {
   const nothingMarked = markFilter !== null && (filters.marks?.length ?? 0) === 0;
 
   const {
+    requestKey,
     results,
     loading,
     error,
@@ -133,9 +134,13 @@ export default function GlazeSearchScreen() {
     [sections]
   );
   const loadedHitCount = results.matches.length + results.near.length;
+  const previousRequestKey = useRef(requestKey);
 
-  const scrollResultsToTop = () =>
+  useEffect(() => {
+    if (previousRequestKey.current === requestKey) return;
+    previousRequestKey.current = requestKey;
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, [requestKey]);
 
   // Your lists are one tap from the catalog because they answer the catalog's own question —
   // "do I have this one already?" — and they are local, so the button works even when the
@@ -173,10 +178,7 @@ export default function GlazeSearchScreen() {
           <Ionicons name="search" size={18} color={colors.stone[400]} />
           <TextInput
             value={term}
-            onChangeText={(next) => {
-              scrollResultsToTop();
-              setTerm(next);
-            }}
+            onChangeText={setTerm}
             placeholder="Blue rutile, sage green, PC-20…"
             placeholderTextColor={colors.stone[300]}
             autoCorrect={false}
@@ -316,7 +318,6 @@ export default function GlazeSearchScreen() {
           onRetryOptions={retryFilterOptions}
           onCancel={() => setFiltersOpen(false)}
           onApply={(nextFilters, nextMarkFilter) => {
-            scrollResultsToTop();
             setCatalogFilters(nextFilters);
             setMarkFilter(nextMarkFilter);
             setFiltersOpen(false);

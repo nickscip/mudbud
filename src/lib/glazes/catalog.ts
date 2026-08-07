@@ -19,7 +19,7 @@ import type {
   ManufacturerScopedOption,
   SearchPage,
 } from "./types";
-import { buildSearchGlazesParams, onlyPopulatedOptions } from "./filterState";
+import { buildSearchPageParams, onlyPopulatedOptions } from "./filterState";
 import { searchPageFromRows } from "./pagination";
 
 /**
@@ -35,7 +35,7 @@ export async function searchGlazes(
 ): Promise<SearchPage> {
   const { data, error } = await supabase.rpc(
     "search_glazes",
-    buildSearchGlazesParams(query, filters, limit + 1, offset)
+    buildSearchPageParams(query, filters, limit, offset)
   );
 
   if (error) throw new Error(error.message);

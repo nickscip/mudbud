@@ -284,31 +284,47 @@ begin
 end $$;
 
 -- Empty browse gives every row the same tier and rank, and two manufacturers above deliberately
--- share a code. It is therefore the strongest pagination fixture: the final id tie-break must
--- decide page membership, not merely restack rows after the page was chosen. Reassembling every
--- two-row page must yield the exact catalog, in order, with neither gaps nor overlap.
+-- share a code. A three-row page puts the two PC-20 rows on opposite sides of the boundary, so the
+-- final id tie-break decides page membership rather than merely restacking rows already selected.
+-- Preserve the function's own output order: sorting each page again would hide a missing outer
+-- tie-break. The definition checks make both ordering sites observable even if a particular query
+-- plan happens to emit tied rows in id order without being required to.
 do $$
 declare
+  function_def text;
   expected_ids bigint[];
+  tied_ids     bigint[];
   page_0       bigint[];
   page_1       bigint[];
-  page_2       bigint[];
   actual_ids   bigint[];
 begin
+  select pg_get_functiondef(
+    'search_glazes(text,smallint[],smallint[],smallint,smallint,smallint[],smallint[],boolean,smallint[],integer,integer,text[],text[])'::regprocedure
+  ) into function_def;
+  if function_def !~ 't[.]code[[:space:]]*,[[:space:]]*t[.]id' then
+    raise exception 'search_glazes page membership is missing the t.id tie-break';
+  end if;
+  if function_def !~ 'p[.]code[[:space:]]*,[[:space:]]*p[.]id' then
+    raise exception 'search_glazes output is missing the p.id tie-break';
+  end if;
+
   select array_agg(g.id order by g.code, g.id) into expected_ids
   from glazes g;
+  select array_agg(g.id order by g.id) into tied_ids
+  from glazes g
+  where g.code = 'PC-20';
 
-  select coalesce(array_agg(id order by code, id), '{}'::bigint[]) into page_0
-  from search_glazes(null, p_limit := 2, p_offset := 0);
-  select coalesce(array_agg(id order by code, id), '{}'::bigint[]) into page_1
-  from search_glazes(null, p_limit := 2, p_offset := 2);
-  select coalesce(array_agg(id order by code, id), '{}'::bigint[]) into page_2
-  from search_glazes(null, p_limit := 2, p_offset := 4);
+  page_0 := array(select id from search_glazes(null, p_limit := 3, p_offset := 0));
+  page_1 := array(select id from search_glazes(null, p_limit := 3, p_offset := 3));
 
-  actual_ids := page_0 || page_1 || page_2;
+  actual_ids := page_0 || page_1;
   if actual_ids is distinct from expected_ids then
     raise exception 'paged browse returned ids %, expected exact catalog %',
       actual_ids, expected_ids;
+  end if;
+  if page_0[3] is distinct from tied_ids[1] or page_1[1] is distinct from tied_ids[2] then
+    raise exception 'PC-20 tie did not straddle the boundary in id order: pages %, %; ties %',
+      page_0, page_1, tied_ids;
   end if;
   if cardinality(actual_ids) <> 5 then
     raise exception 'paged browse returned % rows, expected exact count 5',

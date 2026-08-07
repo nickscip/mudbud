@@ -296,6 +296,7 @@ export function useGlazeSearch(
   );
 
   return {
+    requestKey,
     results,
     loading,
     error,

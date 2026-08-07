@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 
-import { buildSearchGlazesParams } from "../src/lib/glazes/filterState.ts";
+import { buildSearchPageParams } from "../src/lib/glazes/filterState.ts";
 import {
   mergeSearchPage,
   nextOffsetFrom,
@@ -54,8 +54,20 @@ check("the final partial page advances to the exact catalog count", () => {
   assert.equal(nextOffsetFrom(960, 22, 40), 982);
 });
 
-check("the wire asks for one sentinel row at the requested offset", () => {
-  const params = buildSearchGlazesParams("", {}, 41, 40);
+check("an exactly full page is terminal without a sentinel", () => {
+  const page = searchPageFromRows(
+    Array.from({ length: 40 }, (_, index) => hit(index + 1)),
+    0,
+    40
+  );
+
+  assert.equal(page.hasMore, false);
+  assert.equal(page.nextOffset, 40);
+  assert.equal(page.matches.length, 40);
+});
+
+check("the page request adds one sentinel row at the requested offset", () => {
+  const params = buildSearchPageParams("", {}, 40, 40);
   assert.equal(params.p_limit, 41);
   assert.equal(params.p_offset, 40);
 });
@@ -118,6 +130,21 @@ check("request identity ignores set order and mark-note churn", () => {
   );
 
   assert.equal(first, sameRequest);
+  assert.notEqual(
+    first,
+    searchRequestKey(
+      "blue",
+      {
+        manufacturerIds: [1, 2],
+        surfaceIds: [3, 5],
+        marks: [
+          { manufacturer: "amaco", code: "PC-20" },
+          { manufacturer: "mayco", code: "SW-214" },
+        ],
+      },
+      40
+    )
+  );
   assert.notEqual(first, searchRequestKey("green", {}, 40));
 });
 
