@@ -453,11 +453,12 @@ the "no edits" claim above is now over a smaller surface than the branch itself 
   appearances, whole, with the count kept in `evidence["coats_unsplit"]`. Filling in
   `coat_order` before the enum widens now fails at startup rather than silently.
   Overlaps E4.
-- **F8a · `Vocabularies.clay_bodies` is not manufacturer-scoped** — **partial: the lookup is
-  fixed, the clay *names* are not.** The flat `dict[str, int]` of code→id loaded across every
-  manufacturer went with F8's Stage 2 — both scoped tables are read by owner now, so two
-  brands sharing a clay code resolve to their own rows. What remains is the half that needs
-  new data: Mayco names its clays ("White Clay", "Speckled Clay") rather than numbering them,
+- **F8a · Mayco's clays are named, not numbered** — **partial: the lookup scoping is done,
+  the clay *names* are not.** The original title ("`Vocabularies.clay_bodies` is not
+  manufacturer-scoped") described a bug that no longer exists: the flat `dict[str, int]` of
+  code→id loaded across every manufacturer went with F8's Stage 2, and both scoped tables are
+  read by owner now, so two brands sharing a clay code resolve to their own rows. What remains
+  is the half that needs new data: Mayco names its clays ("White Clay", "Speckled Clay") rather than numbering them,
   while `ImageFacts.clay_body_number` is an integer keyed on AMACO's numbered clays and Mayco
   has no `clay_bodies` rows seeded at all. Until a name-carrying field and those rows exist,
   Mayco's clay-body alt text stays real evidence that D3's on-different-clays rail cannot
@@ -737,10 +738,14 @@ Kept separate so nobody picks up a UI ticket and discovers the well is dry.
   `oxidation` throughout), and it changes how a glaze looks more than most axes we do model.
   There is no field on `ImageFacts` and no column on `appearances`. The grammar reports it as
   an unmatched token so it shows up rather than vanishing.
-- **Clay body by name** — same shape of gap. Mayco's alt text says "White Clay, cone 6
-  oxidation"; `ImageFacts.clay_body_number` is an integer keyed on AMACO's numbered clays,
-  and the lookup is not manufacturer-scoped (F8a). So D3's on-different-clays rail has Mayco
-  evidence available and unused.
+- **Clay body by name** — same shape of gap, and now a smaller one. Mayco's alt text says
+  "White Clay, cone 6 oxidation", while `ImageFacts.clay_body_number` is an integer keyed on
+  AMACO's numbered clays. The *lookup* is no longer the problem — F8a's half of F8 Stage 2
+  scoped `Vocabularies.clay_bodies` to one manufacturer, so a shared code can no longer
+  resolve to another brand's row. What is missing is a model and the data behind it: a
+  name-carrying field on `ImageFacts`, and Mayco `clay_bodies` rows, of which there are
+  currently none. So D3's on-different-clays rail still has Mayco evidence available and
+  unused.
 - **Photograph credit, for anyone** — `glaze_images.credit` exists and no adapter has ever
   set it: AMACO burns the photographer's name into the image, and Mayco publishes none. The
   app shows `Photograph © <brand>` for every image because that is all there is.
