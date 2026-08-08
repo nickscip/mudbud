@@ -416,32 +416,53 @@ the "no edits" claim above is now over a smaller surface than the branch itself 
   Proven rather than asserted: `supabase/tests/search_smoke.sql` loads a second manufacturer
   with a colliding `PC-20` and asserts each lookup answers for the brand asked about. The
   fixture is keyed `testco`, not `mayco`, so F10's real Mayco row cannot collide with it.
-- **F8 · Vocabulary scoping** — **todo, and no longer hypothetical.** `clay_bodies` is
-  already seeded per manufacturer (`20260726000100_vocabularies.sql:98`), which is the right
-  pattern. `coat_levels` is not: it is global, its keys are AMACO's caption words (`light`,
-  `slightly_light`, `slightly_heavy`, `heavy`), and `ordinal` is `not null unique`.
-  Migrations are append-only, so this is a new migration either way.
-  What the Mayco pass measured, which the decision now has to answer to:
-  - Mayco's composites hold **four** tiles, not three, captioned by brush-coat *count*:
-    `sw214_1234coats_cone6_web.jpg`, alt `"1, 2, 3, 4 coats, cone 6 oxidation"`. AMACO also
-    has four `CoatLevel` members but its splitter refuses anything that is not exactly
-    three, so `HEAVY` is never emitted.
-  - So the counts are 1–4 and the thicknesses are light→heavy. Whether those are one axis
-    with different labels or two axes is still the open question, but it is now a question
-    about real data on both sides rather than a hypothesis about Mayco.
-  - Meanwhile `MaycoAdapter.coat_order` is empty and the grammar never classifies an image
-    as `COATS_COMPOSITE`, so nothing splits and nothing is lost: those images still become
-    appearances, whole, with the count kept in `evidence["coats_unsplit"]` so the decision
-    has data when it is made.
-- **F8a · `Vocabularies.clay_bodies` is not manufacturer-scoped** — **todo, latent.** The
-  table is scoped correctly; the *lookup* is not. `Vocabularies.clay_bodies` is a flat
-  `dict[str, int]` of code→id loaded across every manufacturer (`core/normalizer.py:33`),
-  so two brands using the same clay code would resolve to whichever row loaded. Dormant
-  today only because Mayco sets `clay_body_number=None` — it names its clays ("White Clay",
-  "Speckled Clay") rather than numbering them, and `ImageFacts.clay_body_number` is an
-  integer keyed on AMACO's numbered clays. This is the same class of bug as F2 and F3, and
-  fixing it is the prerequisite for Mayco's clay-body alt text feeding D3's
-  on-different-clays rail — which is real evidence currently being dropped.
+- **F8 · Vocabulary scoping** — **done, in two stages.** The open question is answered:
+  the two scales are **independent**, not one axis with different labels. Nothing measured
+  says AMACO's "slightly heavy" is the condition three Mayco brush coats produce, so they
+  get their own rows and an `ordinal` that means something only within one brand.
+  - *Stage 1, schema* (`20260807000100_manufacturer_scoped_coat_levels.sql`): `coat_levels`
+    gains `manufacturer_id`; the global `key` and `ordinal` unique constraints become
+    `(manufacturer_id, key)` and `(manufacturer_id, ordinal)`; the four existing rows
+    backfill to AMACO, keeping their ids because appearances already reference them; Mayco's
+    `1`–`4` are seeded beside them. A preflight refuses to run against anything but the
+    four-row AMACO vocabulary it knows how to backfill.
+  - *Stage 2, ETL*: `load_vocabularies(conn, manufacturer=…)` scopes both `coat_levels` and
+    `clay_bodies` to one owner and raises `LookupError` for a manufacturer with no row —
+    the state a source is in between its enum member and its seed migration. `Vocabularies`
+    carries its owner, so `AppearanceWriter.replace` can refuse a product its normalizer
+    does not resolve. `normalizer_for` checks each adapter's `coat_order` against the
+    vocabulary at startup, because the composite path resolves through a plain dict lookup
+    and would otherwise write nulls at an unchanged row count. Note the division of labour
+    with the triggers Stage 1 added: the database *rejects* an appearance whose coat level
+    or clay body belongs to another brand, so a mismatched pair fails loudly — but a
+    vocabulary scoped to the wrong owner resolves to nothing at all, and a null is not a
+    mismatch. The startup check is what catches that half.
+  - Sequencing that mattered: the migration had to reach every hosted environment before the
+    scoped query merged. Old ETL on the new schema was safe (the key sets were disjoint);
+    new ETL on the old schema is not.
+- **F8b · The four-tile Mayco splitter** — **todo**, and what is actually left of the coat
+  axis. Mayco's composites hold **four** tiles captioned by brush-coat count
+  (`sw214_1234coats_cone6_web.jpg`, alt `"1, 2, 3, 4 coats, cone 6 oxidation"`), while
+  `CompositeSplitter` refuses anything that is not exactly three and its white-background
+  detector is tuned to AMACO's layout. `CoatLevel` is also still AMACO's four thickness
+  words, so Mayco's seeded rows are unreachable from Python: widening it is the first move,
+  and `AppearanceWriter.existing_pixel_data` — which reads a key back through
+  `CoatLevel(str(key))` — is the second seam. Needs captured Mayco composites as fixtures.
+  Meanwhile `MaycoAdapter.coat_order` stays empty and the grammar never classifies an image
+  as `COATS_COMPOSITE`, so nothing splits and nothing is lost: those images still become
+  appearances, whole, with the count kept in `evidence["coats_unsplit"]`. Filling in
+  `coat_order` before the enum widens now fails at startup rather than silently.
+  Overlaps E4.
+- **F8a · Mayco's clays are named, not numbered** — **partial: the lookup scoping is done,
+  the clay *names* are not.** The original title ("`Vocabularies.clay_bodies` is not
+  manufacturer-scoped") described a bug that no longer exists: the flat `dict[str, int]` of
+  code→id loaded across every manufacturer went with F8's Stage 2, and both scoped tables are
+  read by owner now, so two brands sharing a clay code resolve to their own rows. What remains
+  is the half that needs new data: Mayco names its clays ("White Clay", "Speckled Clay") rather than numbering them,
+  while `ImageFacts.clay_body_number` is an integer keyed on AMACO's numbered clays and Mayco
+  has no `clay_bodies` rows seeded at all. Until a name-carrying field and those rows exist,
+  Mayco's clay-body alt text stays real evidence that D3's on-different-clays rail cannot
+  use.
 - **F9 · Tests and fixtures were single-source shaped** — **done**, except the part that
   needs Mayco to exist. `tests/fixtures/<key>/` mirrors the registry (the AMACO images
   moved under `fixtures/amaco/images/`), conftest's helpers take a source parameter and
@@ -717,10 +738,14 @@ Kept separate so nobody picks up a UI ticket and discovers the well is dry.
   `oxidation` throughout), and it changes how a glaze looks more than most axes we do model.
   There is no field on `ImageFacts` and no column on `appearances`. The grammar reports it as
   an unmatched token so it shows up rather than vanishing.
-- **Clay body by name** — same shape of gap. Mayco's alt text says "White Clay, cone 6
-  oxidation"; `ImageFacts.clay_body_number` is an integer keyed on AMACO's numbered clays,
-  and the lookup is not manufacturer-scoped (F8a). So D3's on-different-clays rail has Mayco
-  evidence available and unused.
+- **Clay body by name** — same shape of gap, and now a smaller one. Mayco's alt text says
+  "White Clay, cone 6 oxidation", while `ImageFacts.clay_body_number` is an integer keyed on
+  AMACO's numbered clays. The *lookup* is no longer the problem — F8a's half of F8 Stage 2
+  scoped `Vocabularies.clay_bodies` to one manufacturer, so a shared code can no longer
+  resolve to another brand's row. What is missing is a model and the data behind it: a
+  name-carrying field on `ImageFacts`, and Mayco `clay_bodies` rows, of which there are
+  currently none. So D3's on-different-clays rail still has Mayco evidence available and
+  unused.
 - **Photograph credit, for anyone** — `glaze_images.credit` exists and no adapter has ever
   set it: AMACO burns the photographer's name into the image, and Mayco publishes none. The
   app shows `Photograph © <brand>` for every image because that is all there is.
@@ -740,9 +765,12 @@ Kept separate so nobody picks up a UI ticket and discovers the well is dry.
   does E1 sync them? The current design is deliberately local; syncing is a real reversal.
 - **Sponsorship** — is a paid featured slot actually wanted at this stage, and what does a
   sponsor buy: slot, ordering, or a badge?
-- **Coat level: per-manufacturer or shared scale?** (F8) AMACO photographs thickness in
-  three tiles labelled light→heavy; Mayco counts brush coats in four, labelled 1–4. Both
-  sides of the question are now measured data rather than one measurement and one guess.
+- ~~**Coat level: per-manufacturer or shared scale?** (F8)~~ — decided: **per-manufacturer**.
+  AMACO photographs thickness in three tiles labelled light→heavy; Mayco counts brush coats
+  in four, labelled 1–4. Nothing measured equates a thickness word with a coat count, so
+  they are independent vocabularies and `ordinal` orders only within one brand. Shipped as
+  `20260807000100` plus the scoped ETL lookup; what is left is F8b, which is a splitter, not
+  a decision.
 - ~~**Mayco crawl delay** (F14)~~ — decided: 10s self-imposed, mirroring AMACO's declared
   budget. ~1.75 hours for a full 630-glaze pass.
 - **Where does kiln atmosphere live?** Newly raised by the Mayco pass. Reduction, soda and
@@ -779,7 +807,9 @@ Not a commitment, just the dependency-respecting reading of the above.
    or `cli.py`. What the second source cost outside its own package was three things, all of
    them the seam being *tested* rather than the seam being wrong: `conftest` learned that a
    stored body need not be HTML, `glaze_hit` gained two columns, and the app stopped
-   spelling brands by uppercasing a key. What remains in the epic is F8 (+F8a) and F15/F16.
+   spelling brands by uppercasing a key. **F8 is now done too**, in two stages — the schema
+   migration and the ETL lookup it gated — which leaves F8b (the four-tile splitter), F8a's
+   clay-name half, and F15/F16.
 6. **Search depth** — A3's line/opacity client work, A4's wiring half and A7 are done; surface
    waits on populated data. A5 now has the Expo Go-safe modal shell but still needs a live result
    count. A6 pagination is the next client-side correctness gap, because every added facet makes

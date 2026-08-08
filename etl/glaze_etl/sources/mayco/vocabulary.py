@@ -185,7 +185,8 @@ CLAY_WORDS: frozenset[str] = frozenset(
 )
 """Clay-body vocabulary Mayco puts in filenames and alt text ("White Clay, cone 6
 oxidation"). Also unused, and for a sharper reason than atmosphere: `ImageFacts` carries
-`clay_body_number`, an integer keyed on AMACO's numbered clays, and
-`Vocabularies.clay_bodies` is a single flat dict loaded across every manufacturer. Mayco
-names its clays instead of numbering them, and inventing numbers for them would risk
-resolving one brand's clay to another's row. Reported, not guessed."""
+`clay_body_number`, an integer keyed on AMACO's numbered clays, while Mayco names its
+clays instead of numbering them. Inventing numbers for them is the part that has no
+answer; it is no longer also true that a number would land on whichever brand's row
+loaded first — `Vocabularies.clay_bodies` is scoped to one manufacturer (F8a), and
+Mayco's is empty until its clays are seeded. Reported, not guessed."""

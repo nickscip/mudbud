@@ -63,6 +63,11 @@ class AppearanceWriter:
         1325 -> 1237 both times.
 
         Carrying the pixel side forward means `reparse` updates exactly what it re-derived.
+
+        F8b seam: `CoatLevel(str(key))` below is AMACO's four thickness words, so this
+        method cannot read back a Mayco row keyed '1'-'4'. Unreachable today — Mayco's
+        `coat_order` is empty, so it stores no regions to read back — and the second place
+        that has to widen when the splitter learns four tiles, after the enum itself.
         """
         rows = self._conn.execute(
             """
@@ -101,6 +106,16 @@ class AppearanceWriter:
         ``manufacturer`` is who any unresolved-token issues are filed against; the
         payload is per-image and carries no product context of its own.
         """
+        if manufacturer != self._normalizer.manufacturer.value:
+            # The vocabulary is scoped to one brand (F8), so a normalizer built for another
+            # would resolve this product's cone and clay against the wrong rows — or, worse,
+            # against rows that merely share a key. Nothing upstream pairs them wrongly
+            # today; this is what stops a future call site from being the first.
+            raise ValueError(
+                f"normalizer resolves {self._normalizer.manufacturer.value!r} but this "
+                f"product is {manufacturer!r}"
+            )
+
         if not payload.regions and payload.lab is None:
             # No pixels were processed this run, so anything the pixels produced must be
             # carried over rather than dropped.
@@ -129,6 +144,18 @@ class AppearanceWriter:
             # A resolved composite yields one row per thickness. This is the coat axis the
             # feature is built around, and the only place it comes from.
             for region in payload.regions:
+                coat_level_id = self._normalizer.coat_level_id(region.coat_level)
+                if coat_level_id is None:
+                    # The whole-image path reports an unresolved level through
+                    # `resolve_appearance`; this one used to swallow it, writing a null at
+                    # an unchanged row count — the coat axis silently absent from exactly
+                    # the images that exist to document it.
+                    self._record_issue(
+                        manufacturer,
+                        "unknown_coat_level",
+                        payload.raw_filename,
+                        {"value": region.coat_level.value},
+                    )
                 self._insert(
                     glaze_id,
                     image_id,
@@ -138,7 +165,7 @@ class AppearanceWriter:
                     hex_secondary=region.hex_secondary,
                     lab=region.lab,
                     lab_secondary=region.lab_secondary,
-                    coat_level_id=self._normalizer.coat_level_id(region.coat_level),
+                    coat_level_id=coat_level_id,
                     crop_bbox=region.crop_bbox,
                 )
             return len(payload.regions)
