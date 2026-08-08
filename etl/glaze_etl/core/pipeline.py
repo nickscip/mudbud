@@ -15,6 +15,7 @@ from glaze_etl.core.color_namer import ColorNamer
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import MediaProcessor
 from glaze_etl.core.models import ImageRole, ParsedProduct, RawSnapshot
+from glaze_etl.core.normalizer import Normalizer, load_vocabularies
 from glaze_etl.core.payloads import ImagePayload, RegionPayload
 from glaze_etl.core.source_adapter import SourceAdapter
 
@@ -27,6 +28,31 @@ class IngestResult:
     images: int
     appearances: int
     color_terms: list[str]
+
+
+def normalizer_for(conn: object, adapter: SourceAdapter) -> Normalizer:
+    """Build the normalizer for one source, and prove its coat vocabulary exists first.
+
+    Here rather than at each command because the check is worth nothing if a call site can
+    skip it, and there is no reason to build a normalizer for a source without one.
+
+    What it catches: `coat_levels` is scoped by manufacturer (F8), so a wrong owner yields
+    an empty dict. Every other resolution reports a miss — `resolve_appearance` files an
+    issue — but the composite path in `AppearanceWriter` is a plain lookup on a payload the
+    splitter already produced, so it would write nulls at the same row count and say
+    nothing. A source that declares a `coat_order` is asserting those levels exist; check
+    it once, loudly, rather than discover it in a data-quality notice a week later.
+
+    An empty `coat_order` checks nothing, which is Mayco until F8b.
+    """
+    normalizer = Normalizer(load_vocabularies(conn, manufacturer=adapter.manufacturer))
+    missing = normalizer.missing_coat_levels(adapter.coat_order)
+    if missing:
+        raise ValueError(
+            f"{adapter.manufacturer.value} declares coat levels its vocabulary does not "
+            f"publish: {', '.join(level.value for level in missing)}"
+        )
+    return normalizer
 
 
 async def ingest_product(

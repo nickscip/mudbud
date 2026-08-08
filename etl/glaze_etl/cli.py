@@ -26,8 +26,7 @@ from glaze_etl.core.fetcher import Fetcher, FetchOutcome
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import MediaProcessor
 from glaze_etl.core.models import ProductRef, RawSnapshot
-from glaze_etl.core.normalizer import Normalizer, load_vocabularies
-from glaze_etl.core.pipeline import ingest_product
+from glaze_etl.core.pipeline import ingest_product, normalizer_for
 from glaze_etl.core.source_adapter import SourceAdapter
 from glaze_etl.core.store import (
     InMemorySnapshotStore,
@@ -222,7 +221,7 @@ def load(
 
     async def run() -> None:
         with db_connect(settings.database_url) as conn:
-            normalizer = Normalizer(load_vocabularies(conn))
+            normalizer = normalizer_for(conn, adapter)
             loader = Loader(conn, normalizer)
             namer = load_color_namer(conn)
 
@@ -307,7 +306,7 @@ def sync(
         failed: list[str] = []
 
         with db_connect(settings.database_url) as conn:
-            loader = Loader(conn, Normalizer(load_vocabularies(conn)))
+            loader = Loader(conn, normalizer_for(conn, adapter))
             namer = load_color_namer(conn)
             already = stored_object_keys(conn, settings.bucket_for(adapter.manufacturer.value))
             blobs = blob_store_for(

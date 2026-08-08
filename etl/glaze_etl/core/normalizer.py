@@ -6,7 +6,7 @@ clay number `16`, cone name `"05"`, opacity `"opaque"` — while every column in
 that a value is not in our vocabulary, and the rule is that an unknown value becomes a
 reported issue rather than a null that looks like "not stated".
 
-Two subtleties worth stating outright:
+Three subtleties worth stating outright:
 
 * **Cone names are not numbers.** `05` is far cooler than `5`, so they are matched as
   text against `cones.name` and never cast. The seeded ids are ordered by temperature,
@@ -14,28 +14,43 @@ Two subtleties worth stating outright:
 * **Layering needs two passes.** `PG-55overSM-11` cannot resolve SM-11 to a glaze id
   while SM-11 may not be loaded yet, so the Loader records the code and links it after
   every product exists.
+* **Two of the vocabularies belong to a manufacturer, not to the catalog** (F8/F8a).
+  `clay_bodies` and `coat_levels` carry a `manufacturer_id`, so a lookup that ignores it
+  resolves a key to whichever brand's row happened to load. That was harmless only while
+  the seeded key sets were disjoint — AMACO's thickness words against Mayco's brush-coat
+  digits — which is an accident of the data rather than a property of the code. So the
+  whole `Vocabularies` object now belongs to one manufacturer, and a `Normalizer` built
+  from it cannot reach another brand's rows at all.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from glaze_etl.core.models import CoatLevel, FormKind, Opacity, Surface
+from glaze_etl.core.models import CoatLevel, FormKind, ManufacturerKey, Opacity, Surface
 
 
 @dataclass(frozen=True)
 class Vocabularies:
-    """Lookup ids, read once per run from the database."""
+    """Lookup ids, read once per run from the database, for one manufacturer."""
 
+    manufacturer: ManufacturerKey
+    """Whose vocabulary this is. The scoped tables below hold only this brand's rows, and
+    it is what lets a writer assert that the product it is loading agrees."""
     cones: dict[str, int]
-    """Cone *name* to id: {"05": 18, "5": 27, "6": 28}."""
+    """Cone *name* to id: {"05": 18, "5": 27, "6": 28}. Not manufacturer-scoped — a cone
+    is a firing temperature, not a brand's word for one."""
     clay_bodies: dict[str, int]
-    """AMACO clay code to id: {"16": 2, "32": 5}."""
+    """This manufacturer's clay code to id: {"16": 2, "32": 5} for AMACO."""
     surfaces: dict[str, int]
     opacities: dict[str, int]
     forms: dict[str, int]
     coat_levels: dict[str, int]
+    """This manufacturer's application-level key to id. AMACO's thickness words; Mayco's
+    brush-coat counts, which are seeded but unreachable until F8b gives it a splitter."""
     manufacturers: dict[str, int]
+    """Every manufacturer key to id — deliberately not scoped, since this *is* the map
+    the scoping is done through."""
 
 
 @dataclass
@@ -61,6 +76,23 @@ class Resolution:
 class Normalizer:
     def __init__(self, vocabularies: Vocabularies) -> None:
         self._vocab = vocabularies
+
+    @property
+    def manufacturer(self) -> ManufacturerKey:
+        """Whose vocabulary this resolves against. Exposed so a caller holding both a
+        product and a normalizer can assert they agree rather than assume it."""
+        return self._vocab.manufacturer
+
+    def missing_coat_levels(self, keys: tuple[CoatLevel, ...]) -> tuple[CoatLevel, ...]:
+        """Which of `keys` this manufacturer does not publish.
+
+        For the one caller that matters, `SourceAdapter.coat_order`, checked once at
+        startup. The region path in `AppearanceWriter` resolves a coat level through a
+        plain dict lookup, so a vocabulary scoped to the wrong owner would write nulls
+        into every composite without raising, filing an issue or changing a row count —
+        the quietest way this module can be wrong.
+        """
+        return tuple(k for k in keys if k.value not in self._vocab.coat_levels)
 
     def cone_id(self, name: str | None) -> int | None:
         """Resolve a cone by name. `"05"` and `"5"` are different cones, never unified."""
@@ -125,19 +157,44 @@ class Normalizer:
         return resolution
 
 
-def load_vocabularies(conn: object) -> Vocabularies:
-    """Read every lookup table into memory. They are tiny and never change mid-run."""
+def load_vocabularies(conn: object, *, manufacturer: ManufacturerKey) -> Vocabularies:
+    """Read every lookup table into memory. They are tiny and never change mid-run.
+
+    ``manufacturer`` is keyword-only and has no default on purpose. A default of `amaco`
+    is precisely how the pipeline used to feed a second source the first one's data
+    (roadmap F3), and the two tables scoped below are the two where that is a silent
+    wrong answer rather than a crash.
+    """
 
     def fetch(table: str, key: str) -> dict[str, int]:
         rows = conn.execute(f"select {key}, id from {table}").fetchall()  # type: ignore[attr-defined]
         return {str(name): int(row_id) for name, row_id in rows}
 
+    def fetch_owned(table: str, key: str, owner: int) -> dict[str, int]:
+        rows = conn.execute(  # type: ignore[attr-defined]
+            f"select {key}, id from {table} where manufacturer_id = %s", (owner,)
+        ).fetchall()
+        return {str(name): int(row_id) for name, row_id in rows}
+
+    manufacturers = fetch("manufacturers", "key")
+    owner = manufacturers.get(manufacturer.value)
+    if owner is None:
+        # The state a half-landed source is in: an enum member added before the migration
+        # that seeds its row. F10 passed through exactly this, and an empty vocabulary is
+        # worse than a stop — every lookup would miss and every appearance would be null.
+        raise LookupError(f"unknown manufacturer {manufacturer.value!r}")
+
     return Vocabularies(
+        manufacturer=manufacturer,
         cones=fetch("cones", "name"),
-        clay_bodies=fetch("clay_bodies", "code"),
+        clay_bodies=fetch_owned("clay_bodies", "code", owner),
         surfaces=fetch("surfaces", "key"),
         opacities=fetch("opacities", "key"),
         forms=fetch("forms", "key"),
-        coat_levels=fetch("coat_levels", "key"),
-        manufacturers=fetch("manufacturers", "key"),
+        # Mayco's four brush-coat rows are seeded (20260807000100) and unreachable: they
+        # are keyed '1'-'4' while `CoatLevel` is AMACO's four thickness words, and
+        # `MaycoAdapter.coat_order` is empty so nothing asks for them. F8b is where the
+        # enum widens; `AppearanceWriter.existing_pixel_data` is the other seam it touches.
+        coat_levels=fetch_owned("coat_levels", "key", owner),
+        manufacturers=manufacturers,
     )

@@ -91,7 +91,10 @@ class MaycoAdapter(SourceAdapter):
     AMACO's layout. F8 made coat levels manufacturer-scoped rather than treating equal
     ordinals as a shared measurement; F8b still has to widen the AMACO-only `CoatLevel`
     type and teach the splitter Mayco's four-tile layout. Until then these images become
-    whole appearances, with the coat count kept in evidence."""
+    whole appearances, with the coat count kept in evidence.
+
+    Filling this in before `CoatLevel` widens fails at startup rather than quietly:
+    `normalizer_for` checks every entry against this manufacturer's `coat_levels` rows."""
 
     volatile_patterns = ()
     """Nothing to strip, measured rather than assumed. The same product fetched twice ten
