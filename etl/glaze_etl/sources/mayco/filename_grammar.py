@@ -219,12 +219,11 @@ def interpret_filename(
     if match := _COATS_RE.search(stem):
         coats = match.group(1)
         consumed.append(match.span())
-        # Not ImageRole.COATS_COMPOSITE, deliberately, and this is the F8 seam. Mayco's
-        # composites hold four tiles (`1234coats`) captioned by brush-coat *count*, while
-        # `CoatLevel` is AMACO's four thickness words and `coat_levels.ordinal` is a
-        # global unique scale. Until F8 decides whether those are one axis, the image is
-        # still a real appearance — it just is not split, and the count is kept here so
-        # the decision has data when it is made.
+        # Not ImageRole.COATS_COMPOSITE yet. F8 decided Mayco's brush-coat counts and
+        # AMACO's thickness words are separate manufacturer vocabularies, with ordinal
+        # meaningful only inside one brand. F8b must widen `CoatLevel` and teach the
+        # splitter Mayco's four-tile (`1234coats`) layout first. The image remains a real
+        # whole appearance, and the source count stays here for that work.
         evidence["coats_unsplit"] = match.group(0)
 
     # --- form, and whether this depicts the line rather than the glaze ---------------

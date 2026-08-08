@@ -63,8 +63,12 @@ insert into appearances (glaze_id, image_id, cone_id, coat_level_id, clay_body_i
                          form_id, hex, confidence)
 select g.id, i.id,
        (select id from cones where name='6'),
-       (select id from coat_levels where key='slightly_light'),
-       (select id from clay_bodies where code = case g.code
+       (select cl.id
+        from coat_levels cl join manufacturers m on m.id = cl.manufacturer_id
+        where m.key = 'amaco' and cl.key = 'slightly_light'),
+       (select cb.id
+        from clay_bodies cb join manufacturers m on m.id = cb.manufacturer_id
+        where m.key = 'amaco' and cb.code = case g.code
           when 'PC-20' then '32'   -- Dark Chocolate
           else '25' end),          -- White Art Clay
        (select id from forms where key='flat_tile'),
@@ -140,12 +144,16 @@ begin
 
   -- Clay-body filter: only PC-20 has an appearance on Dark Chocolate No. 32.
   select count(*) into n from search_glazes(
-    null, p_clay_body := array[(select id from clay_bodies where code='32')]::smallint[]);
+    null, p_clay_body := array[(select cb.id
+      from clay_bodies cb join manufacturers m on m.id = cb.manufacturer_id
+      where m.key = 'amaco' and cb.code = '32')]::smallint[]);
   if n <> 1 then raise exception 'clay filter returned % rows, expected 1', n; end if;
 
   -- Filters must apply to the near tier too, not just to matches.
   select count(*) into n from search_glazes(
-    'temoku', p_clay_body := array[(select id from clay_bodies where code='16')]::smallint[]);
+    'temoku', p_clay_body := array[(select cb.id
+      from clay_bodies cb join manufacturers m on m.id = cb.manufacturer_id
+      where m.key = 'amaco' and cb.code = '16')]::smallint[]);
   if n <> 0 then raise exception 'clay filter leaked on the near tier'; end if;
 
   raise notice 'search_glazes: all assertions passed';
@@ -202,6 +210,47 @@ from glazes g
 join manufacturers m on m.id = g.manufacturer_id
 join glaze_images i on i.glaze_id = g.id
 where m.key = 'testco';
+
+-- Scope is a database invariant, not merely an ETL convention. Reuse a clay code across brands,
+-- then prove neither it nor Mayco's coat-count vocabulary can be attached to an AMACO glaze.
+insert into clay_bodies (manufacturer_id, code, name, color_family)
+select id, '32', 'Test Co No. 32', 'other'
+from manufacturers where key = 'testco';
+
+do $$
+begin
+  begin
+    insert into appearances (glaze_id, image_id, coat_level_id, confidence)
+    select g.id, i.id, cl.id, 'high'
+    from glazes g
+    join manufacturers gm on gm.id = g.manufacturer_id and gm.key = 'amaco'
+    join glaze_images i on i.glaze_id = g.id
+    cross join coat_levels cl
+    join manufacturers cm on cm.id = cl.manufacturer_id and cm.key = 'mayco'
+    where g.code = 'PC-13' and cl.key = '3';
+
+    raise exception 'cross-manufacturer coat level was accepted';
+  exception when check_violation then
+    null;
+  end;
+
+  begin
+    insert into appearances (glaze_id, image_id, clay_body_id, confidence)
+    select g.id, i.id, cb.id, 'high'
+    from glazes g
+    join manufacturers gm on gm.id = g.manufacturer_id and gm.key = 'amaco'
+    join glaze_images i on i.glaze_id = g.id
+    cross join clay_bodies cb
+    join manufacturers cm on cm.id = cb.manufacturer_id and cm.key = 'testco'
+    where g.code = 'PC-13' and cb.code = '32';
+
+    raise exception 'cross-manufacturer clay body was accepted';
+  exception when check_violation then
+    null;
+  end;
+
+  raise notice 'appearance manufacturer scope: invalid pairings rejected';
+end $$;
 
 do $$
 declare n int; mk text; t text; u text; amaco_id bigint; testco_id bigint;

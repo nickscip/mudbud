@@ -182,7 +182,13 @@ end $$;
 -- Seeded by migration rather than by the ETL, so they are part of the schema contract. Each
 -- assertion here is an invariant some other code silently depends on.
 do $$
-declare n int;
+declare
+  n int;
+  got text;
+  want text;
+  coat_manufacturer_attnum smallint;
+  coat_key_attnum smallint;
+  coat_ordinal_attnum smallint;
 begin
 
 -- Cone names are not numbers, and the whole cone-range filter rests on the id order: 05 is far
@@ -205,26 +211,103 @@ if exists (
   raise exception 'clay_bodies.manufacturer_id became nullable; vocabulary scoping regressed';
 end if;
 
--- coat_levels is the counter-example, asserted so F8 is decided rather than discovered. It is
--- global — no manufacturer_id at all — and its `ordinal` is `not null unique`, so Mayco's
--- "1 coat / 2 coats / 3 coats" cannot be inserted without taking an ordinal AMACO is not using
--- (semantically wrong, since ordinal means position on one scale) or dropping the constraint.
--- Both of these fail loudly when F8 lands, which is the intent: the test is a reminder that the
--- decision has consequences here, not an objection to making it.
-if exists (
+-- F8 decided coat levels are manufacturer vocabulary, not a universal scale. AMACO's
+-- qualitative thickness words and Mayco's brush-coat counts may share ordinal positions for
+-- display, but equal ordinals do not assert equal physical application. Ownership is therefore
+-- required and both identities are unique only within that owner.
+if not exists (
   select 1 from information_schema.columns
   where table_name = 'coat_levels' and column_name = 'manufacturer_id'
+    and is_nullable = 'NO'
 ) then
-  raise exception 'coat_levels gained manufacturer_id; F8 was decided — update this test';
+  raise exception 'coat_levels.manufacturer_id is missing or nullable';
+end if;
+
+select attnum into coat_manufacturer_attnum
+from pg_attribute
+where attrelid = 'coat_levels'::regclass and attname = 'manufacturer_id';
+
+select attnum into coat_key_attnum
+from pg_attribute
+where attrelid = 'coat_levels'::regclass and attname = 'key';
+
+select attnum into coat_ordinal_attnum
+from pg_attribute
+where attrelid = 'coat_levels'::regclass and attname = 'ordinal';
+
+if coat_manufacturer_attnum is null or coat_key_attnum is null or coat_ordinal_attnum is null then
+  raise exception 'coat_levels scoped identity columns are missing';
+end if;
+
+if not exists (
+  select 1 from pg_constraint
+  where conrelid = 'coat_levels'::regclass and contype = 'f'
+    and confrelid = 'manufacturers'::regclass
+    and conkey = array[coat_manufacturer_attnum]
+) then
+  raise exception 'coat_levels.manufacturer_id is not a foreign key to manufacturers';
 end if;
 
 if not exists (
   select 1 from pg_constraint
   where conrelid = 'coat_levels'::regclass and contype = 'u'
-    and conkey = array[(select attnum from pg_attribute
-                        where attrelid = 'coat_levels'::regclass and attname = 'ordinal')]
+    and conkey = array[coat_manufacturer_attnum, coat_key_attnum]
 ) then
-  raise exception 'coat_levels.ordinal lost its unique constraint; F8 was decided — update this test';
+  raise exception 'coat_levels is not unique on (manufacturer_id, key)';
+end if;
+
+if not exists (
+  select 1 from pg_constraint
+  where conrelid = 'coat_levels'::regclass and contype = 'u'
+    and conkey = array[coat_manufacturer_attnum, coat_ordinal_attnum]
+) then
+  raise exception 'coat_levels is not unique on (manufacturer_id, ordinal)';
+end if;
+
+if exists (
+  select 1
+  from pg_index i
+  where i.indrelid = 'coat_levels'::regclass
+    and i.indisunique
+    and i.indpred is null
+    and i.indnkeyatts = 1
+    and (coat_key_attnum = any(i.indkey::smallint[])
+      or coat_ordinal_attnum = any(i.indkey::smallint[]))
+) then
+  raise exception 'coat_levels still has a global key or ordinal unique index';
+end if;
+
+select string_agg(v.trigger_name, ', ' order by v.trigger_name) into got
+from (values
+  ('appearances', 'appearances_manufacturer_scope'),
+  ('glazes', 'glazes_appearance_manufacturer_scope'),
+  ('coat_levels', 'coat_levels_appearance_manufacturer_scope'),
+  ('clay_bodies', 'clay_bodies_appearance_manufacturer_scope')
+) as v(table_name, trigger_name)
+where not exists (
+  select 1
+  from pg_trigger t
+  where t.tgrelid = v.table_name::regclass
+    and t.tgname = v.trigger_name
+    and not t.tgisinternal
+);
+
+if got is not null then
+  raise exception 'appearance manufacturer-scope triggers missing: %', got;
+end if;
+
+select string_agg(
+         m.key || ':' || cl.key || ':' || cl.name || ':' || cl.ordinal,
+         ', ' order by m.key, cl.ordinal
+       ) into got
+from coat_levels cl join manufacturers m on m.id = cl.manufacturer_id;
+
+want := 'amaco:light:Light coat:1, amaco:slightly_light:Slightly light coat:2, '
+     || 'amaco:slightly_heavy:Slightly heavy coat:3, amaco:heavy:Heavy coat:4, '
+     || 'mayco:1:1 coat:1, mayco:2:2 coats:2, mayco:3:3 coats:3, mayco:4:4 coats:4';
+
+if got is distinct from want then
+  raise exception E'coat level seeds changed.\n  got:  %\n  want: %', got, want;
 end if;
 
 raise notice 'contract: vocabulary invariants hold';
