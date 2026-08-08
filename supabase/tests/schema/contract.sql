@@ -182,7 +182,13 @@ end $$;
 -- Seeded by migration rather than by the ETL, so they are part of the schema contract. Each
 -- assertion here is an invariant some other code silently depends on.
 do $$
-declare n int; got text; want text;
+declare
+  n int;
+  got text;
+  want text;
+  coat_manufacturer_attnum smallint;
+  coat_key_attnum smallint;
+  coat_ordinal_attnum smallint;
 begin
 
 -- Cone names are not numbers, and the whole cone-range filter rests on the id order: 05 is far
@@ -217,13 +223,27 @@ if not exists (
   raise exception 'coat_levels.manufacturer_id is missing or nullable';
 end if;
 
+select attnum into coat_manufacturer_attnum
+from pg_attribute
+where attrelid = 'coat_levels'::regclass and attname = 'manufacturer_id';
+
+select attnum into coat_key_attnum
+from pg_attribute
+where attrelid = 'coat_levels'::regclass and attname = 'key';
+
+select attnum into coat_ordinal_attnum
+from pg_attribute
+where attrelid = 'coat_levels'::regclass and attname = 'ordinal';
+
+if coat_manufacturer_attnum is null or coat_key_attnum is null or coat_ordinal_attnum is null then
+  raise exception 'coat_levels scoped identity columns are missing';
+end if;
+
 if not exists (
   select 1 from pg_constraint
   where conrelid = 'coat_levels'::regclass and contype = 'f'
     and confrelid = 'manufacturers'::regclass
-    and conkey = array[(select attnum from pg_attribute
-                        where attrelid = 'coat_levels'::regclass
-                          and attname = 'manufacturer_id')]
+    and conkey = array[coat_manufacturer_attnum]
 ) then
   raise exception 'coat_levels.manufacturer_id is not a foreign key to manufacturers';
 end if;
@@ -231,11 +251,7 @@ end if;
 if not exists (
   select 1 from pg_constraint
   where conrelid = 'coat_levels'::regclass and contype = 'u'
-    and conkey = array[
-      (select attnum from pg_attribute where attrelid = 'coat_levels'::regclass
-         and attname = 'manufacturer_id'),
-      (select attnum from pg_attribute where attrelid = 'coat_levels'::regclass
-         and attname = 'key')]
+    and conkey = array[coat_manufacturer_attnum, coat_key_attnum]
 ) then
   raise exception 'coat_levels is not unique on (manufacturer_id, key)';
 end if;
@@ -243,26 +259,41 @@ end if;
 if not exists (
   select 1 from pg_constraint
   where conrelid = 'coat_levels'::regclass and contype = 'u'
-    and conkey = array[
-      (select attnum from pg_attribute where attrelid = 'coat_levels'::regclass
-         and attname = 'manufacturer_id'),
-      (select attnum from pg_attribute where attrelid = 'coat_levels'::regclass
-         and attname = 'ordinal')]
+    and conkey = array[coat_manufacturer_attnum, coat_ordinal_attnum]
 ) then
   raise exception 'coat_levels is not unique on (manufacturer_id, ordinal)';
 end if;
 
 if exists (
-  select 1 from pg_constraint
-  where conrelid = 'coat_levels'::regclass and contype = 'u'
-    and conkey in (
-      array[(select attnum from pg_attribute where attrelid = 'coat_levels'::regclass
-               and attname = 'key')],
-      array[(select attnum from pg_attribute where attrelid = 'coat_levels'::regclass
-               and attname = 'ordinal')]
-    )
+  select 1
+  from pg_index i
+  where i.indrelid = 'coat_levels'::regclass
+    and i.indisunique
+    and i.indpred is null
+    and i.indnkeyatts = 1
+    and (coat_key_attnum = any(i.indkey::smallint[])
+      or coat_ordinal_attnum = any(i.indkey::smallint[]))
 ) then
-  raise exception 'coat_levels still has a global key or ordinal unique constraint';
+  raise exception 'coat_levels still has a global key or ordinal unique index';
+end if;
+
+select string_agg(v.trigger_name, ', ' order by v.trigger_name) into got
+from (values
+  ('appearances', 'appearances_manufacturer_scope'),
+  ('glazes', 'glazes_appearance_manufacturer_scope'),
+  ('coat_levels', 'coat_levels_appearance_manufacturer_scope'),
+  ('clay_bodies', 'clay_bodies_appearance_manufacturer_scope')
+) as v(table_name, trigger_name)
+where not exists (
+  select 1
+  from pg_trigger t
+  where t.tgrelid = v.table_name::regclass
+    and t.tgname = v.trigger_name
+    and not t.tgisinternal
+);
+
+if got is not null then
+  raise exception 'appearance manufacturer-scope triggers missing: %', got;
 end if;
 
 select string_agg(
