@@ -278,7 +278,10 @@ E4 is Python work on a pipeline that already runs.
   the whole-image row's colour forward the same way `existing_pixel_data` already did for split
   composite regions — and it raises loudly rather than guessing if it ever finds more than one
   such row for an image, since nothing constrains that at the schema level and no current write
-  path produces it. `Loader.upsert_image`'s `ON CONFLICT` clause had the identical bug shape for
+  path produces it. A schema-permitted composite row with a crop box but no resolved coat level
+  remains outside both carry-forward readers; `normalizer_for` prevents that state in every live
+  ingestion path today, so widening the readers for it is out of scope. `Loader.upsert_image`'s
+  `ON CONFLICT` clause had the identical bug shape for
   `glaze_images.storage_path` / `sha256` / `width` / `height`, including when a run's image fetch
   fails outright and not only when images are skipped entirely; those four columns now coalesce
   onto the prior value instead of overwriting it with null.

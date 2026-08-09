@@ -111,9 +111,11 @@ class AppearanceWriter:
     def existing_singleton_colour(self, image_id: int) -> _CarriedColour | None:
         """The whole-image row's measured colour already recorded for this image, if any.
 
-        The other half of `existing_pixel_data`: an ordinary appearance has no `crop_bbox`
-        and no `coat_level_id`, so it never joins through `coat_levels` and was never
-        carried forward by that method — the bug this carries forward from (roadmap E6).
+        Complements `existing_pixel_data` for the live ordinary-image path: an ordinary
+        appearance has no `crop_bbox` and no `coat_level_id`, so it never joins through
+        `coat_levels` and was never carried forward by that method (roadmap E6). A
+        schema-permitted composite row with a crop box but no resolved coat level remains
+        outside both readers; `normalizer_for` prevents that state in the live pipeline.
 
         Fetches up to two rows rather than one. Nothing at the schema level stops a second
         `crop_bbox is null` row existing for one image, and silently picking one with

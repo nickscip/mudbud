@@ -63,14 +63,14 @@ def _stored_image(seed: str, generation_number: int) -> StoredImage:
         storage_key=f"l/{digest[:2]}/{digest}.jpg",
         color=ColorReading(
             dominant=Lab(
-                l=float(int(digest[0:2], 16)),
-                a=float(int(digest[2:4], 16)) - 128.0,
-                b=float(int(digest[4:6], 16)) - 128.0,
+                l=40.0 + generation_number,
+                a=-20.0 + generation_number,
+                b=10.0 + generation_number,
             ),
             secondary=Lab(
-                l=float(int(digest[6:8], 16)),
-                a=float(int(digest[8:10], 16)) - 128.0,
-                b=float(int(digest[10:12], 16)) - 128.0,
+                l=60.0 + generation_number,
+                a=-10.0 + generation_number,
+                b=20.0 + generation_number,
             ),
             dominant_hex=f"#{digest[0:6]}",
             secondary_hex=f"#{digest[6:12]}",
