@@ -70,6 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      backfill_slug: ${{ steps.pick.outputs.backfill_slug }}
       sources: ${{ steps.pick.outputs.sources }}
     steps:
       - id: pick
@@ -82,8 +83,14 @@ jobs:
           SLUG: ${{ github.event.inputs.slug }}
         run: |
           if [ "$BACKFILL" = "true" ]; then
-            if [ -z "${SLUG//[[:space:]]/}" ]; then
+            SLUG="${SLUG#"${SLUG%%[![:space:]]*}"}"
+            SLUG="${SLUG%"${SLUG##*[![:space:]]}"}"
+            if [ -z "$SLUG" ]; then
               echo "::error::a backfill requires a product slug" >&2
+              exit 1
+            fi
+            if [[ "$SLUG" == *[[:space:]]* ]]; then
+              echo "::error::a product slug cannot contain whitespace" >&2
               exit 1
             fi
             if [ -z "$MANUFACTURER" ] || [ "$MANUFACTURER" = "all" ]; then
@@ -96,6 +103,7 @@ jobs:
             ""|all) sources='["amaco","mayco"]' ;;
             *)      sources="[\"$MANUFACTURER\"]" ;;
           esac
+          echo "backfill_slug=$SLUG" >> "$GITHUB_OUTPUT"
           echo "sources=$sources" >> "$GITHUB_OUTPUT"
           if [ "$BACKFILL" = "true" ]; then
             echo "backfilling: $MANUFACTURER/$SLUG" >> "$GITHUB_STEP_SUMMARY"
@@ -156,7 +164,7 @@ jobs:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           BACKFILL: ${{ github.event.inputs.backfill }}
-          BACKFILL_SLUG: ${{ github.event.inputs.slug }}
+          BACKFILL_SLUG: ${{ needs.plan.outputs.backfill_slug }}
           IMAGES: ${{ github.event.inputs.images }}
           LIMIT: ${{ github.event.inputs.limit }}
           MANUFACTURER: ${{ matrix.manufacturer }}
