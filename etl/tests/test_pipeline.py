@@ -111,7 +111,11 @@ class StubMedia:
             height=100,
             storage_key="l/de/deadbeef.jpg",
             color=_reading("#123456"),
-            regions=_regions(self._region_count) if split_composite else (),
+            regions=(
+                _regions(self._region_count)
+                if split_composite and expected_regions in (3, 4)
+                else ()
+            ),
         )
 
 

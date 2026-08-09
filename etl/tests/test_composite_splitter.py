@@ -131,9 +131,11 @@ class TestSplitting:
     def test_mayco_four_count_fixture_resolves_four_ordered_non_overlapping_tiles(self) -> None:
         with Image.open(MAYCO_IMAGES / "sw214-1234coats-cone5.jpg") as image:
             result = split_coats_composite(image, expected_regions=4)
-        assert result.ok, result.reason
-        assert result.diagnostics["layout"] == "mayco_four_count"
-        assert len(result.boxes) == 4
+            assert result.ok, result.reason
+            assert result.diagnostics["layout"] == "mayco_four_count"
+            assert len(result.boxes) == 4
+            hexes = [read_color(sample_region(image, box)).dominant_hex for box in result.boxes]
+        assert len(set(hexes)) == 4, hexes
         for left, right in itertools.pairwise(result.boxes):
             assert left.right == right.left
             assert left.left < right.left
@@ -164,6 +166,14 @@ class TestRefusals:
     def test_blank_image_is_refused(self) -> None:
         result = split_coats_composite(Image.new("RGB", (600, 400), (255, 255, 255)))
         assert not result.ok
+
+    def test_blank_image_is_refused_by_the_mayco_four_region_detector(self) -> None:
+        result = split_coats_composite(
+            Image.new("RGB", (1080, 1080), (255, 255, 255)), expected_regions=4
+        )
+        assert not result.ok
+        assert result.boxes == ()
+        assert result.reason == "no four-tile slab found"
 
     def test_every_refusal_explains_itself(self) -> None:
         """The reason lands in a parse_issues row, so it has to be actionable."""

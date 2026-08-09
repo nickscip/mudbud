@@ -90,6 +90,11 @@ async def ingest_product(
         )
 
         if media is not None:
+            if facts.role is ImageRole.COATS_COMPOSITE and not adapter.coat_order:
+                raise ValueError(
+                    f"{adapter.manufacturer.value} emitted a coats composite "
+                    "without a coat_order to map its regions"
+                )
             try:
                 stored = await media.process(
                     str(image.source_url),
