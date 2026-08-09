@@ -94,6 +94,7 @@ async def ingest_product(
                 stored = await media.process(
                     str(image.source_url),
                     split_composite=facts.role is ImageRole.COATS_COMPOSITE,
+                    expected_regions=len(adapter.coat_order),
                     # Lets MediaProcessor serve from the local cache instead of asking the
                     # manufacturer's CDN for bytes we already hold.
                     known_sha256=loader.known_sha256(str(image.source_url)),

@@ -491,19 +491,11 @@ the "no edits" claim above is now over a smaller surface than the branch itself 
     each. A gate whose only enforcement is a sentence in a pull-request description is not a gate.
   - The deploy also settled a G1 question as a side effect — the two GitHub environments turn out
     to be one database. Recorded there rather than here.
-- **F8b · The four-tile Mayco splitter** — **todo**, and what is actually left of the coat
-  axis. Mayco's composites hold **four** tiles captioned by brush-coat count
-  (`sw214_1234coats_cone6_web.jpg`, alt `"1, 2, 3, 4 coats, cone 6 oxidation"`), while
-  `CompositeSplitter` refuses anything that is not exactly three and its white-background
-  detector is tuned to AMACO's layout. `CoatLevel` is also still AMACO's four thickness
-  words, so Mayco's seeded rows are unreachable from Python: widening it is the first move,
-  and `AppearanceWriter.existing_pixel_data` — which reads a key back through
-  `CoatLevel(str(key))` — is the second seam. Needs captured Mayco composites as fixtures.
-  Meanwhile `MaycoAdapter.coat_order` stays empty and the grammar never classifies an image
-  as `COATS_COMPOSITE`, so nothing splits and nothing is lost: those images still become
-  appearances, whole, with the count kept in `evidence["coats_unsplit"]`. Filling in
-  `coat_order` before the enum widens now fails at startup rather than silently.
-  Overlaps E4.
+- **F8b · The four-tile Mayco splitter** — **done.** The checked-in SW-214 fixture pins a
+  provenance URL, SHA-256 and dimensions. Only its verified `1234coats` filename marker is
+  classified as a composite; the adapter maps its four left-to-right regions to Mayco's scoped
+  `1`–`4` vocabulary. The detector requires the fixture-backed slab and count-label geometry,
+  otherwise it records a refusal and retains the existing whole-image fallback. Overlaps E4.
 - **F8a · Mayco's clays are named, not numbered** — **partial: the lookup scoping is done,
   the clay *names* are not.** The original title ("`Vocabularies.clay_bodies` is not
   manufacturer-scoped") described a bug that no longer exists: the flat `dict[str, int]` of

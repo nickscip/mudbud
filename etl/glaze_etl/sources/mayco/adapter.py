@@ -10,6 +10,7 @@ import httpx
 from selectolax.parser import HTMLParser
 
 from glaze_etl.core.models import (
+    CoatLevel,
     ImageFacts,
     ManufacturerKey,
     ParsedImage,
@@ -83,18 +84,13 @@ class MaycoAdapter(SourceAdapter):
     # more roughly than one that has. At ~630 glazes that makes a full pass ~1.75 hours,
     # which the weekly cron absorbs. It is the only lever: the Fetcher is strictly serial.
 
-    coat_order = ()
-    """Empty, so nothing is ever split, and now for a measured reason rather than caution.
-    Mayco's composites hold **four** tiles captioned by brush-coat count
-    (`sw214_1234coats_cone6_web.jpg`, alt "1, 2, 3, 4 coats"), while the splitter refuses
-    anything that is not exactly three and its white-background detector is tuned to
-    AMACO's layout. F8 made coat levels manufacturer-scoped rather than treating equal
-    ordinals as a shared measurement; F8b still has to widen the AMACO-only `CoatLevel`
-    type and teach the splitter Mayco's four-tile layout. Until then these images become
-    whole appearances, with the coat count kept in evidence.
+    coat_order = (CoatLevel.ONE, CoatLevel.TWO, CoatLevel.THREE, CoatLevel.FOUR)
+    """Mayco's verified composites read one through four brush coats left to right.
 
-    Filling this in before `CoatLevel` widens fails at startup rather than quietly:
-    `normalizer_for` checks every entry against this manufacturer's `coat_levels` rows."""
+    The splitter is only selected after the filename grammar recognizes the exact
+    ``1234coats`` marker, so ordinary one- through four-coat filenames remain whole images.
+    ``normalizer_for`` checks these values against Mayco's scoped vocabulary at startup.
+    """
 
     volatile_patterns = ()
     """Nothing to strip, measured rather than assumed. The same product fetched twice ten

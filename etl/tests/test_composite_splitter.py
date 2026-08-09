@@ -23,6 +23,7 @@ from glaze_etl.core.composite_splitter import (
 )
 
 IMAGES = Path(__file__).parent / "fixtures" / "amaco" / "images"
+MAYCO_IMAGES = Path(__file__).parent / "fixtures" / "mayco" / "images"
 COMPOSITES = ["pc20-application-tiles", "pc30-application-tiles"]
 
 
@@ -126,6 +127,23 @@ class TestSplitting:
             lightness = [read_color(sample_region(image, box)).dominant.l for box in boxes]
         assert lightness[1] > lightness[0]
         assert lightness[1] > lightness[2]
+
+    def test_mayco_four_count_fixture_resolves_four_ordered_non_overlapping_tiles(self) -> None:
+        with Image.open(MAYCO_IMAGES / "sw214-1234coats-cone5.jpg") as image:
+            result = split_coats_composite(image, expected_regions=4)
+        assert result.ok, result.reason
+        assert result.diagnostics["layout"] == "mayco_four_count"
+        assert len(result.boxes) == 4
+        for left, right in itertools.pairwise(result.boxes):
+            assert left.right == right.left
+            assert left.left < right.left
+
+    def test_an_unsupported_expected_count_refuses_with_a_diagnostic(self) -> None:
+        with Image.open(MAYCO_IMAGES / "sw214-1234coats-cone5.jpg") as image:
+            result = split_coats_composite(image, expected_regions=5)
+        assert not result.ok
+        assert result.boxes == ()
+        assert result.diagnostics["expected_regions"] == 5
 
 
 class TestRefusals:

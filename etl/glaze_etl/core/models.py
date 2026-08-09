@@ -63,12 +63,16 @@ class ImageRole(StrEnum):
 
 
 class CoatLevel(StrEnum):
-    """AMACO's captions, verbatim, on the coats composites."""
+    """Manufacturer-scoped captions or counts on coats composites."""
 
     LIGHT = "light"
     SLIGHTLY_LIGHT = "slightly_light"
     SLIGHTLY_HEAVY = "slightly_heavy"
     HEAVY = "heavy"
+    ONE = "1"
+    TWO = "2"
+    THREE = "3"
+    FOUR = "4"
 
 
 class FormKind(StrEnum):

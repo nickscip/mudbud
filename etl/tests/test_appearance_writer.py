@@ -20,6 +20,7 @@ from collections.abc import Iterator
 
 import psycopg
 import pytest
+from psycopg.types.json import Json
 
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.models import Confidence, ImageFacts, ImageRole, ManufacturerKey
@@ -172,3 +173,57 @@ def test_more_than_one_whole_image_appearance_row_fails_loudly_instead_of_choosi
         "select count(*) from appearances where image_id = %s", (image_id,)
     ).fetchone()
     assert row is not None and row[0] == 2, "the raise must happen before the delete"
+
+
+def test_text_only_reparse_preserves_mayco_numeric_coat_regions(conn: Connection) -> None:
+    """Digit-string vocabulary keys must round-trip through ``existing_pixel_data``."""
+    mayco_id = _inserted_id(conn, "select id from manufacturers where key = 'mayco'")
+    glaze_id = _inserted_id(
+        conn,
+        "insert into glazes (manufacturer_id, code, name, slug, product_url)"
+        " values (%s, 'TC-4', 'Test Glaze', 'tc-4', 'https://example.test/tc-4/')"
+        " returning id",
+        (mayco_id,),
+    )
+    image_id = _inserted_id(
+        conn,
+        "insert into glaze_images (glaze_id, source_url, role, raw_filename, parse_confidence)"
+        " values (%s, 'https://example.test/tc-4.jpg', 'coats_composite', 'TC-4.jpg', 'high')"
+        " returning id",
+        (glaze_id,),
+    )
+    coat_rows = conn.execute(
+        "select id, key from coat_levels where manufacturer_id = %s order by ordinal", (mayco_id,)
+    ).fetchall()
+    assert [row[1] for row in coat_rows] == ["1", "2", "3", "4"]
+    for ordinal, (coat_level_id, _) in enumerate(coat_rows):
+        conn.execute(
+            "insert into appearances "
+            "(glaze_id, image_id, coat_level_id, crop_bbox, hex, source, confidence)"
+            " values (%s, %s, %s, %s, %s, 'manufacturer', 'high')",
+            (
+                glaze_id,
+                image_id,
+                coat_level_id,
+                Json({"left": ordinal * 10, "top": 0, "right": ordinal * 10 + 10, "bottom": 10}),
+                f"#00000{ordinal}",
+            ),
+        )
+
+    loader = Loader(conn, Normalizer(load_vocabularies(conn, manufacturer=ManufacturerKey.MAYCO)))
+    payload = ImagePayload(
+        facts=ImageFacts(role=ImageRole.COATS_COMPOSITE, confidence=Confidence.HIGH),
+        source_url="https://example.test/tc-4.jpg",
+        raw_filename="TC-4.jpg",
+    )
+    assert loader.replace_appearances(glaze_id, image_id, payload, manufacturer="mayco") == 4
+
+    rows = conn.execute(
+        "select cl.key, a.crop_bbox, a.hex from appearances a"
+        " join coat_levels cl on cl.id = a.coat_level_id"
+        " where a.image_id = %s order by cl.ordinal",
+        (image_id,),
+    ).fetchall()
+    assert [row[0] for row in rows] == ["1", "2", "3", "4"]
+    assert [row[1]["left"] for row in rows] == [0, 10, 20, 30]
+    assert [row[2] for row in rows] == ["#000000", "#000001", "#000002", "#000003"]

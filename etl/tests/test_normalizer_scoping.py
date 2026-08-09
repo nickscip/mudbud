@@ -21,7 +21,7 @@ from collections.abc import Iterator
 import psycopg
 import pytest
 
-from glaze_etl.core.models import ManufacturerKey
+from glaze_etl.core.models import CoatLevel, ManufacturerKey
 from glaze_etl.core.normalizer import load_vocabularies
 from glaze_etl.core.pipeline import normalizer_for
 from glaze_etl.sources import adapter_for
@@ -88,12 +88,22 @@ def test_startup_accepts_a_vocabulary_that_publishes_them() -> None:
     assert normalizer.manufacturer is ManufacturerKey.AMACO
 
 
-def test_an_empty_coat_order_is_checked_against_nothing() -> None:
-    """Mayco until F8b: it publishes coat levels but classifies no image as a composite,
-    so it declares no `coat_order` and the guard above has nothing to assert."""
-    conn = _StubConn({"manufacturers": [("mayco", 2)]})
+def test_mayco_numeric_coat_order_requires_and_accepts_its_scoped_vocabulary() -> None:
+    conn = _StubConn(
+        {
+            "manufacturers": [("mayco", 2)],
+            "coat_levels": [(str(index), index) for index in range(1, 5)],
+        }
+    )
 
-    assert normalizer_for(conn, adapter_for("mayco")).manufacturer is ManufacturerKey.MAYCO
+    normalizer = normalizer_for(conn, adapter_for("mayco"))
+    assert normalizer.manufacturer is ManufacturerKey.MAYCO
+    assert adapter_for("mayco").coat_order == (
+        CoatLevel.ONE,
+        CoatLevel.TWO,
+        CoatLevel.THREE,
+        CoatLevel.FOUR,
+    )
 
 
 @pytest.fixture

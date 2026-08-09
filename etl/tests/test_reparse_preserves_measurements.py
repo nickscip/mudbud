@@ -11,9 +11,8 @@ a real disposable Postgres, and only `MediaProcessor` stubbed — because the bu
 two calls to the full pipeline interact with each other's state, not in one writer method
 read in isolation.
 
-Mayco fixtures are used because `MaycoAdapter.coat_order` is empty (F8b) and its filename
-grammar never emits `ImageRole.COATS_COMPOSITE`, so every image in these two fixtures takes
-the ordinary, non-composite path E6 describes.
+The ordinary Mayco fixtures used here still cover the non-composite path E6 describes;
+the separate F8b coverage exercises the four-region composite path.
 
 Skipped unless a scratch Postgres is reachable — see test_store_integration.py for how to
 provide one.
@@ -105,6 +104,7 @@ class StubMedia:
         source_url: str,
         *,
         split_composite: bool = False,
+        expected_regions: int = 3,
         known_sha256: str | None = None,
     ) -> StoredImage:
         return self._values[source_url]
@@ -119,6 +119,7 @@ class FailingMedia:
         source_url: str,
         *,
         split_composite: bool = False,
+        expected_regions: int = 3,
         known_sha256: str | None = None,
     ) -> StoredImage:
         raise OSError("simulated failure")

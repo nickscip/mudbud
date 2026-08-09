@@ -14,6 +14,7 @@ import json
 from datetime import UTC, datetime
 
 import pytest
+from PIL import Image
 
 from glaze_etl.core.models import (
     Confidence,
@@ -43,6 +44,12 @@ from tests.conftest import all_product_slugs, fixture_dir, raw_snapshot, snapsho
 SLUGS = all_product_slugs("mayco")
 FIXTURES = fixture_dir("mayco")
 ADAPTER = MaycoAdapter()
+MAYCO_IMAGES = FIXTURES / "images"
+SW214_FOUR_COATS = MAYCO_IMAGES / "sw214-1234coats-cone5.jpg"
+SW214_FOUR_COATS_URL = (
+    "https://www.maycocolors.com/wp-content/uploads/2024/03/"
+    "sw214_1234coats_cone5_web.jpg"
+)
 
 
 def parse(slug: str) -> ParsedProduct:
@@ -620,24 +627,33 @@ class TestGrammar:
         assert facts.combination_codes == ("SW-214", "SW-401", "SW-402")
         assert facts.confidence is Confidence.LOW
 
-    def test_a_coats_composite_is_recorded_but_never_split(self) -> None:
-        """Mayco's composites hold four tiles, captioned by brush-coat count.
-
-        Not `COATS_COMPOSITE`: the splitter refuses anything but three and its
-        white-background detector is tuned to AMACO's layout, and `CoatLevel` is AMACO's
-        four thickness *words*. Whether counts and thicknesses are one axis is the F8
-        decision. The image is still a real appearance meanwhile, and the count is kept so
-        that decision has data.
-        """
+    def test_only_the_verified_four_coat_marker_is_a_composite(self) -> None:
         facts = interpret_filename("sw214_1234coats_cone5_web.jpg", "SW-214")
-        assert facts.role is not ImageRole.COATS_COMPOSITE
+        assert facts.role is ImageRole.COATS_COMPOSITE
         assert facts.coat_level is None
-        assert facts.evidence["coats_unsplit"] == "1234coats"
+        assert facts.evidence["coats_composite"] == "1234coats"
+        for marker in ("1coats", "2coats", "3coats", "4coats"):
+            other = interpret_filename(f"sw214_{marker}_cone5_web.jpg", "SW-214")
+            assert other.role is not ImageRole.COATS_COMPOSITE
+            assert other.evidence["coats_unsplit"] == marker
+        assert (
+            interpret_filename("sw214_1234_cone5_web.jpg", "SW-214").role
+            is not ImageRole.COATS_COMPOSITE
+        )
 
-    def test_the_adapter_declares_no_coat_order(self) -> None:
-        """The pipeline raises if regions arrive without a `coat_order` to map them, so an
-        empty tuple and a grammar that never emits COATS_COMPOSITE have to agree."""
-        assert ADAPTER.coat_order == ()
+    def test_the_adapter_declares_four_numeric_coat_levels(self) -> None:
+        assert tuple(level.value for level in ADAPTER.coat_order) == ("1", "2", "3", "4")
+
+
+    def test_four_coat_fixture_has_pinned_local_provenance_and_integrity(self) -> None:
+        """Downloaded bytes match the exact public URL captured in the SW-214 fixture."""
+        snapshot = json.loads((FIXTURES / "product-sw214-micro-pearl.json").read_text())
+        assert SW214_FOUR_COATS_URL in json.dumps(snapshot)
+        assert hashlib.sha256(SW214_FOUR_COATS.read_bytes()).hexdigest() == (
+            "002d90aa8568abceaaedb753d3539dcf7dc354986ccff8c93c2fbed57c056838"
+        )
+        with Image.open(SW214_FOUR_COATS) as image:
+            assert image.size == (1080, 1080)
 
     def test_whole_line_imagery_is_excluded(self) -> None:
         """`2024_SW_lineup_clay-body-bowls_1_IGtall.jpg` is shared by 11 Stoneware products

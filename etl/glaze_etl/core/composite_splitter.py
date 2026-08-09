@@ -221,14 +221,22 @@ def separated_tiles(background: BackgroundMask) -> tuple[BBox, ...]:
     return tuple(BBox(left, top, right, bottom) for left, right in runs)
 
 
-def split_coats_composite(image: Image.Image) -> SplitResult:
-    """Locate the three coat tiles, or refuse and explain.
+def split_coats_composite(image: Image.Image, *, expected_regions: int = 3) -> SplitResult:
+    """Locate the adapter-declared coat tiles, or refuse and explain.
 
     Boxes come back left to right. Mapping them onto coat levels is the adapter's job
     (`coat_order`) — only an adapter that classifies an image as COATS_COMPOSITE routes
     it here, so this stays an AMACO-layout utility a source opts into, not generic code
     asserting how every manufacturer photographs thickness.
     """
+    if expected_regions == 4:
+        return _split_mayco_four_tiles(image)
+    if expected_regions != 3:
+        return SplitResult(
+            reason=f"unsupported expected region count: {expected_regions}",
+            diagnostics={"expected_regions": expected_regions},
+        )
+
     rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
     gray = rgb.mean(axis=2)
     height, width = gray.shape
@@ -318,6 +326,106 @@ def split_coats_composite(image: Image.Image) -> SplitResult:
             "row_span": span,
             "tile_width": round(tile_width, 1),
         },
+    )
+
+
+def _split_mayco_four_tiles(image: Image.Image) -> SplitResult:
+    """Split Mayco's verified four-count slab, or refuse it without guessing.
+
+    SW-214 has one rectangular slab divided into four equal application regions, with the
+    handwritten count labels below it. Unlike AMACO's captioned layouts, the divisions do
+    not create white gutters, so the geometry and the four evenly-spaced labels are both
+    required before equal quarters are accepted.
+    """
+    rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
+    gray = rgb.mean(axis=2)
+    height, width = gray.shape
+    foreground = rgb.min(axis=2) < _BACKGROUND_LUMA
+
+    # The slab is the longest substantial foreground band above the handwritten labels.
+    upper = foreground[: int(height * 0.75)]
+    dense = upper.mean(axis=1) > 0.45
+    labels, count = ndimage.label(dense)
+    if count == 0:
+        return SplitResult(reason="no four-tile slab found", diagnostics={})
+    sizes = ndimage.sum(dense, labels, range(1, count + 1))
+    rows = np.where(labels == int(np.argmax(sizes)) + 1)[0]
+    top, bottom = int(rows.min()), int(rows.max()) + 1
+    if bottom - top < height * 0.30:
+        return SplitResult(
+            reason="four-tile slab is too shallow",
+            diagnostics={"top": top, "bottom": bottom},
+        )
+
+    solid = foreground[top:bottom].mean(axis=0) > 0.70
+    columns = np.where(solid)[0]
+    if columns.size == 0:
+        return SplitResult(reason="no full-height four-tile slab found", diagnostics={})
+    left, right = int(columns.min()), int(columns.max()) + 1
+    slab_width = right - left
+    slab_height = bottom - top
+    credible_width = width * 0.55 <= slab_width <= width * 0.85
+    # The photographed SW-214 tile is almost square at the extent detected against the
+    # studio background (786x763).  The sampling crop stays in its glazed upper half, so
+    # accepting that measured shape does not pull the unglazed label area into colour
+    # measurement.
+    credible_aspect = 1.0 <= slab_width / slab_height <= 1.7
+    if not (credible_width and credible_aspect):
+        return SplitResult(
+            reason="four-tile slab geometry is not credible",
+            diagnostics={"slab": (left, top, right, bottom)},
+        )
+
+    # Four count labels occupy their own horizontal band; product and cone writing below
+    # it must not be treated as a fifth label.
+    label_band = gray[int(height * 0.79) : int(height * 0.88)] < _TEXT_LUMA
+    ink = np.where(label_band.any(axis=0))[0]
+    gaps = np.where(np.diff(ink) > width * 0.025)[0] if ink.size else ()
+    runs: list[tuple[int, int]] = []
+    if ink.size:
+        start = 0
+        for gap in gaps:
+            runs.append((int(ink[start]), int(ink[gap]) + 1))
+            start = int(gap) + 1
+        runs.append((int(ink[start]), int(ink[-1]) + 1))
+    expected = [left + slab_width * (index + 0.5) / 4 for index in range(4)]
+    tolerance = slab_width * 0.06
+    aligned_runs = [
+        run
+        for run in runs
+        if any(abs((run[0] + run[1]) / 2 - target) <= tolerance for target in expected)
+    ]
+    if len(aligned_runs) != 4:
+        aligned_count = len(aligned_runs)
+        return SplitResult(
+            reason=f"expected 4 aligned count-label blocks below the slab, found {aligned_count}",
+            diagnostics={"label_blocks": runs, "aligned_label_blocks": aligned_runs},
+        )
+    centres = [(start + end) / 2 for start, end in aligned_runs]
+    if any(
+        abs(actual - target) > tolerance
+        for actual, target in zip(centres, expected, strict=True)
+    ):
+        return SplitResult(
+            reason="four count labels do not align with slab quarters",
+            diagnostics={"label_centres": centres, "expected_centres": expected},
+        )
+
+    tile_width = slab_width / 4
+    boxes = tuple(
+        BBox(
+            int(left + index * tile_width),
+            top,
+            int(left + (index + 1) * tile_width),
+            bottom,
+        )
+        for index in range(4)
+    )
+    return SplitResult(
+        boxes=boxes,
+        ok=True,
+        reason="4 equal Mayco tiles under 4 count labels",
+        diagnostics={"layout": "mayco_four_count", "slab": (left, top, right, bottom)},
     )
 
 

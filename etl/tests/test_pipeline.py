@@ -20,10 +20,11 @@ from glaze_etl.core.color import ColorReading, Lab
 from glaze_etl.core.composite_splitter import BBox
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import MediaProcessor, RegionReading, StoredImage
-from glaze_etl.core.models import ParsedProduct
+from glaze_etl.core.models import CoatLevel, ParsedProduct
 from glaze_etl.core.payloads import ImagePayload
 from glaze_etl.core.pipeline import ingest_product
 from glaze_etl.sources.amaco.adapter import AmacoAdapter
+from glaze_etl.sources.mayco.adapter import MaycoAdapter
 from tests.conftest import snapshot_for
 
 COMPOSITE_SLUG = "pc-20-blue-rutile"
@@ -92,14 +93,18 @@ class StubMedia:
 
     def __init__(self, region_count: int) -> None:
         self._region_count = region_count
+        self.expected_regions: list[int] = []
 
     async def process(
         self,
         source_url: str,
         *,
         split_composite: bool = False,
+        expected_regions: int = 3,
         known_sha256: str | None = None,
     ) -> StoredImage:
+        if split_composite:
+            self.expected_regions.append(expected_regions)
         return StoredImage(
             sha256="deadbeef",
             width=100,
@@ -151,3 +156,23 @@ class TestCoatOrder:
         `coat_order` is the same bug arriving later."""
         with pytest.raises(ValueError, match="coat_order"):
             await _ingest(AmacoAdapter(), region_count=len(AmacoAdapter.coat_order) + 1)
+
+    async def test_mayco_numeric_order_maps_four_regions(self) -> None:
+        adapter = MaycoAdapter()
+        loader = StubLoader()
+        media = StubMedia(region_count=4)
+        await ingest_product(
+            snapshot_for("sw214-micro-pearl", source="mayco"),
+            adapter,
+            cast(Loader, loader),
+            cast(MediaProcessor, media),
+            None,
+        )
+        composites = [payload for payload in loader.payloads if payload.regions]
+        assert len(composites) == 3
+        assert media.expected_regions == [4, 4, 4]
+        assert all(
+            [region.coat_level for region in payload.regions]
+            == [CoatLevel.ONE, CoatLevel.TWO, CoatLevel.THREE, CoatLevel.FOUR]
+            for payload in composites
+        )
