@@ -124,3 +124,51 @@ def test_a_product_the_normalizer_does_not_resolve_is_refused(conn: Connection) 
 
     with pytest.raises(ValueError, match="amaco"):
         loader.replace_appearances(glaze_id, image_id, payload, manufacturer="mayco")
+
+
+def test_more_than_one_whole_image_appearance_row_fails_loudly_instead_of_choosing_one(
+    conn: Connection,
+) -> None:
+    """R003: nothing at the schema level stops two `crop_bbox is null` rows sharing one
+    `image_id`, even though no current write path produces that state. Inserted directly
+    by SQL here, bypassing `AppearanceWriter` entirely, since it never produces this state
+    itself. A text-only reparse that finds it must refuse to guess which one is right
+    rather than silently keeping one and discarding the other.
+    """
+    mayco_id = _inserted_id(conn, "select id from manufacturers where key = 'mayco'")
+    glaze_id = _inserted_id(
+        conn,
+        "insert into glazes (manufacturer_id, code, name, slug, product_url)"
+        " values (%s, 'TC-3', 'Test Glaze', 'tc-3', 'https://example.test/tc-3/')"
+        " returning id",
+        (mayco_id,),
+    )
+    image_id = _inserted_id(
+        conn,
+        "insert into glaze_images (glaze_id, source_url, role, raw_filename,"
+        " parse_confidence)"
+        " values (%s, 'https://example.test/tc-3.jpg', 'label_chip', 'TC-3.jpg',"
+        " 'high') returning id",
+        (glaze_id,),
+    )
+    for hex_value in ("#111111", "#222222"):
+        conn.execute(
+            "insert into appearances (glaze_id, image_id, hex, source, confidence)"
+            " values (%s, %s, %s, 'manufacturer', 'high')",
+            (glaze_id, image_id, hex_value),
+        )
+
+    loader = Loader(conn, Normalizer(load_vocabularies(conn, manufacturer=ManufacturerKey.MAYCO)))
+    payload = ImagePayload(
+        facts=ImageFacts(role=ImageRole.LABEL_CHIP, confidence=Confidence.HIGH),
+        source_url="https://example.test/tc-3.jpg",
+        raw_filename="TC-3.jpg",
+    )
+
+    with pytest.raises(ValueError, match=f"image {image_id} has 2"):
+        loader.replace_appearances(glaze_id, image_id, payload, manufacturer="mayco")
+
+    row = conn.execute(
+        "select count(*) from appearances where image_id = %s", (image_id,)
+    ).fetchone()
+    assert row is not None and row[0] == 2, "the raise must happen before the delete"
