@@ -293,19 +293,22 @@ E4 is Python work on a pipeline that already runs.
   run, not part of this change.
 - **E5 · Orphan blob GC** — **done.** Ships `glaze-etl gc --manufacturer <key>`: reports
   by default (referenced/bucket counts, orphaned sha/object counts, anything held back
-  or unparseable), and only deletes with `--prune`. Two structural refusals exist
+  or unparseable), and only deletes with `--prune`. Three structural refusals exist
   because deletion is irreversible and a
   local-database/hosted-bucket mismatch is a documented failure mode here
-  (`AGENTS.md`'s Mayco-sync anecdote): a hard, non-overridable refusal when the computed
-  reference set is empty against a non-empty bucket, and a refusal (overridable with
-  `--force`) when the orphan fraction exceeds 10% of a bucket of at least 40 objects.
+  (`AGENTS.md`'s Mayco-sync anecdote): a hard refusal unless the database connection and
+  Storage URL identify the same Supabase project, a hard refusal when the computed reference
+  set is empty against a non-empty bucket, and a refusal (overridable with `--force`) when
+  the orphan fraction exceeds 10% of a bucket of at least 40 objects.
   Two further timing safeguards close the gap between an upload and the database row
   that cites it: a per-object minimum age (`--min-age-minutes`, default 60) excludes any
   sha-group with a too-recent or unknown-age object from deletion for that run, and the
   orphan set is recomputed against the database immediately before deleting, dropping
   anything referenced since the report was printed. Ships the sweep and its tests only —
   it has not been run against the hosted database or bucket, which remains a deliberate
-  follow-up for the owner, exactly as E6's entry deferred the SW-511 reparse.
+  follow-up for the owner, exactly as E6's entry deferred the SW-511 reparse. The required
+  credentialed Storage checks include never-uploaded and already-removed keys so a benign
+  concurrent-prune race is verified as a no-op before any hosted run.
 
 ## Epic F — Mayco, and making ingestion source-agnostic
 

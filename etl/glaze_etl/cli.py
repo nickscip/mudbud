@@ -19,6 +19,7 @@ import structlog
 import typer
 
 from glaze_etl.core.blob_gc import (
+    database_matches_storage_project,
     exceeds_safety_threshold,
     plan_blob_sweep,
     recheck_orphans,
@@ -390,10 +391,10 @@ def gc(
     """Report — and, with `--prune`, delete — bucket objects no `glaze_images` row cites.
 
     Report-only by default, so a bare `glaze-etl gc` is always safe to run. Deletion is
-    irreversible, so this refuses outright (no override) when the computed reference set
-    is empty against a non-empty bucket — the shape a wrong database/bucket pairing
-    produces — and refuses unless `--force` when the orphan fraction looks implausibly
-    high.
+    irreversible, so this refuses outright (no override) when the database and Storage
+    endpoint do not identify the same Supabase project or when the computed reference set
+    is empty against a non-empty bucket. It also refuses unless `--force` when the orphan
+    fraction looks implausibly high.
     """
     settings = Settings()
     bucket = settings.bucket_for(manufacturer)
@@ -404,6 +405,19 @@ def gc(
 
         referenced = referenced_shas(conn, manufacturer)
         ages = stored_object_ages(conn, bucket)
+
+        if prune and not database_matches_storage_project(
+            info.host,
+            info.user,
+            settings.supabase_url,
+        ):
+            typer.secho(
+                "refusing: the database connection and SUPABASE_URL do not identify "
+                "the same Supabase project; gc will not delete across an unknown or "
+                "mismatched project boundary",
+                fg=typer.colors.RED,
+            )
+            raise typer.Exit(code=1)
 
         if reference_set_looks_wrong(len(referenced), len(ages)):
             typer.secho(

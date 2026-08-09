@@ -17,11 +17,49 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
 from glaze_etl.core import media
 
 _SHARD_RE = re.compile(r"[0-9a-f]{2}")
 _FILENAME_RE = re.compile(r"([0-9a-f]{64})\.jpg")
+_STORAGE_PROJECT_RE = re.compile(r"^([a-z0-9]+)\.supabase\.co$")
+_DIRECT_DB_PROJECT_RE = re.compile(r"^db\.([a-z0-9]+)\.supabase\.co$")
+_POOLED_DB_USER_RE = re.compile(r"^postgres\.([a-z0-9]+)$")
+_LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def database_matches_storage_project(
+    database_host: str | None,
+    database_user: str | None,
+    storage_url: str,
+) -> bool:
+    """Whether the DB connection and Storage URL identify the same Supabase project.
+
+    Hosted direct connections encode the project ref in
+    `db.<ref>.supabase.co`; transaction-pooler connections encode it in the
+    `postgres.<ref>` username. Local Supabase is recognized only when both endpoints are
+    loopback. Anything custom or unrecognized fails closed because this gates irreversible
+    deletion, not ordinary reads or uploads.
+    """
+    storage_host = urlparse(storage_url).hostname
+    if storage_host is None:
+        return False
+    normalized_storage_host = storage_host.lower()
+    normalized_database_host = (database_host or "").lower()
+    if normalized_storage_host in _LOCAL_HOSTS:
+        return normalized_database_host in _LOCAL_HOSTS
+
+    storage_match = _STORAGE_PROJECT_RE.fullmatch(normalized_storage_host)
+    if storage_match is None:
+        return False
+    storage_project = storage_match.group(1)
+
+    direct_match = _DIRECT_DB_PROJECT_RE.fullmatch(normalized_database_host)
+    if direct_match is not None and direct_match.group(1) == storage_project:
+        return True
+    user_match = _POOLED_DB_USER_RE.fullmatch(database_user or "")
+    return user_match is not None and user_match.group(1) == storage_project
 
 
 def sha_from_key(key: str) -> str | None:

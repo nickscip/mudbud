@@ -6,6 +6,7 @@ import hashlib
 from datetime import UTC, datetime, timedelta
 
 from glaze_etl.core.blob_gc import (
+    database_matches_storage_project,
     exceeds_safety_threshold,
     plan_blob_sweep,
     recheck_orphans,
@@ -15,6 +16,48 @@ from glaze_etl.core.blob_gc import (
 from glaze_etl.core.media import DERIVATIVES
 
 NOW = datetime(2026, 8, 9, 12, 0, tzinfo=UTC)
+
+
+class TestDatabaseMatchesStorageProject:
+    def test_direct_host_matches_the_storage_project_ref(self) -> None:
+        assert database_matches_storage_project(
+            "db.abcdefghijklmnopqrst.supabase.co",
+            "postgres",
+            "https://abcdefghijklmnopqrst.supabase.co",
+        )
+
+    def test_pooler_username_matches_the_storage_project_ref(self) -> None:
+        assert database_matches_storage_project(
+            "aws-0-us-east-1.pooler.supabase.com",
+            "postgres.abcdefghijklmnopqrst",
+            "https://abcdefghijklmnopqrst.supabase.co",
+        )
+
+    def test_local_endpoints_match(self) -> None:
+        assert database_matches_storage_project(
+            "127.0.0.1", "postgres", "http://127.0.0.1:54321"
+        )
+
+    def test_local_database_never_matches_hosted_storage(self) -> None:
+        assert not database_matches_storage_project(
+            "127.0.0.1",
+            "postgres",
+            "https://abcdefghijklmnopqrst.supabase.co",
+        )
+
+    def test_different_hosted_projects_do_not_match(self) -> None:
+        assert not database_matches_storage_project(
+            "aws-0-us-east-1.pooler.supabase.com",
+            "postgres.aaaaaaaaaaaaaaaaaaaa",
+            "https://bbbbbbbbbbbbbbbbbbbb.supabase.co",
+        )
+
+    def test_unknown_custom_storage_domain_fails_closed(self) -> None:
+        assert not database_matches_storage_project(
+            "db.abcdefghijklmnopqrst.supabase.co",
+            "postgres",
+            "https://storage.example.test",
+        )
 
 
 def sha(seed: str) -> str:

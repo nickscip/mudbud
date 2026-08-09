@@ -60,6 +60,18 @@ class TestRoundTrip:
 
 
 class TestRemove:
+    def test_removing_a_never_uploaded_key_does_not_raise(
+        self, store: SupabaseBlobStore, key: str
+    ) -> None:
+        store.remove([key])
+
+    def test_removing_an_already_removed_key_does_not_raise(
+        self, store: SupabaseBlobStore, key: str
+    ) -> None:
+        store.put(key, PAYLOAD, "image/jpeg")
+        store.remove([key])
+        store.remove([key])
+
     def test_remove_then_absent(self, store: SupabaseBlobStore, key: str) -> None:
         store.put(key, PAYLOAD, "image/jpeg")
         store.remove([key])
