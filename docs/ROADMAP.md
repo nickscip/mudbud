@@ -315,7 +315,9 @@ E4 is Python work on a pipeline that already runs.
   transaction-mode pooler. A heartbeat keeps the dedicated lock connection active, and
   health checks immediately before reference commits and Storage deletion abort if it is
   lost. CI proves exclusion and post-release acquisition through a real transaction-mode
-  PgBouncer, not only against direct Postgres. Ships the sweep and its tests only —
+  PgBouncer, not only against direct Postgres; that test holds the lock across a configured
+  idle-transaction eviction threshold to prove the heartbeat is what preserves it. Ships the
+  sweep and its tests only —
   it has not been run against the hosted database or bucket, which remains a deliberate
   follow-up for the owner, exactly as E6's entry deferred the SW-511 reparse. The required
   credentialed Storage checks include never-uploaded and already-removed keys so a benign

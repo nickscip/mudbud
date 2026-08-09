@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 import uuid
 from collections.abc import Iterator
 
@@ -121,16 +122,27 @@ def test_two_rows_sharing_one_sha_under_the_same_manufacturer_yield_one_entry(
     assert shared_sha in result
 
 
-def _assert_blob_operation_lock_exclusion(dsn: str) -> None:
-    with (
-        exclusive_blob_operation(dsn, "amaco", heartbeat_seconds=0.01),
-        pytest.raises(BlobOperationAlreadyRunning),
-        exclusive_blob_operation(dsn, "amaco", heartbeat_seconds=0.01),
-    ):
-        pytest.fail("the same manufacturer lock was acquired twice")
+def _assert_blob_operation_lock_exclusion(
+    dsn: str,
+    *,
+    heartbeat_seconds: float = 0.01,
+    hold_seconds: float = 0.0,
+) -> None:
+    with exclusive_blob_operation(
+        dsn, "amaco", heartbeat_seconds=heartbeat_seconds
+    ) as held_lock:
+        if hold_seconds:
+            time.sleep(hold_seconds)
+        held_lock.check()
+        with pytest.raises(BlobOperationAlreadyRunning), exclusive_blob_operation(
+            dsn, "amaco", heartbeat_seconds=heartbeat_seconds
+        ):
+            pytest.fail("the same manufacturer lock was acquired twice")
 
     # Releasing the first transaction must make the lock available again.
-    with exclusive_blob_operation(dsn, "amaco", heartbeat_seconds=0.01):
+    with exclusive_blob_operation(
+        dsn, "amaco", heartbeat_seconds=heartbeat_seconds
+    ):
         pass
 
 
@@ -141,6 +153,10 @@ def test_blob_operation_lock_excludes_a_second_process() -> None:
 
 @pytest.mark.skipif(not POOLER_DSN, reason="TEST_PGBOUNCER_DB_URL not set")
 def test_blob_operation_lock_through_a_transaction_pooler() -> None:
-    """Exercise the backend-pinning assumption against real transaction-mode PgBouncer."""
+    """The heartbeat crosses PgBouncer's 1s idle-transaction eviction threshold."""
     assert POOLER_DSN
-    _assert_blob_operation_lock_exclusion(POOLER_DSN)
+    _assert_blob_operation_lock_exclusion(
+        POOLER_DSN,
+        heartbeat_seconds=0.1,
+        hold_seconds=2.5,
+    )
