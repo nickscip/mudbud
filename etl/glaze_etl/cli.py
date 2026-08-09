@@ -9,6 +9,9 @@ rather than a second implementation that can drift.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -17,11 +20,29 @@ import psycopg
 import structlog
 import typer
 
-from glaze_etl.core.blob_store import blob_store_for
+from glaze_etl.core.blob_gc import (
+    database_matches_storage_project,
+    exceeds_safety_threshold,
+    plan_blob_sweep,
+    recheck_orphans,
+    reference_set_looks_wrong,
+)
+from glaze_etl.core.blob_store import SupabaseBlobStore, blob_store_for
 from glaze_etl.core.color_namer import load_color_namer
 from glaze_etl.core.config import Settings
+from glaze_etl.core.db import (
+    BlobOperationAlreadyRunning,
+    BlobOperationLock,
+    BlobOperationLockLost,
+    exclusive_blob_operation,
+    referenced_shas,
+    stored_object_ages,
+    stored_object_keys,
+)
 from glaze_etl.core.db import connect as db_connect
-from glaze_etl.core.db import stored_object_keys
+from glaze_etl.core.db import (
+    connection as db_connection,
+)
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import MediaProcessor
@@ -47,6 +68,28 @@ structlog.configure(
 log = structlog.get_logger("glaze_etl")
 
 ManufacturerOption = Annotated[str, typer.Option(help="Source key, e.g. amaco.")]
+
+
+@contextmanager
+def _exclusive_blob_operation(
+    database_url: str, manufacturer: str
+) -> Iterator[BlobOperationLock]:
+    """Turn a failed non-blocking lock acquisition into a concise CLI refusal."""
+    try:
+        with exclusive_blob_operation(database_url, manufacturer) as operation_lock:
+            yield operation_lock
+    except BlobOperationAlreadyRunning:
+        typer.secho(
+            f"refusing: another sync, load, or gc prune is active for {manufacturer}",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1) from None
+    except BlobOperationLockLost:
+        typer.secho(
+            f"aborting: lost the database lock protecting blob operations for {manufacturer}",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1) from None
 
 
 @app.command()
@@ -220,7 +263,12 @@ def load(
     adapter = adapter_for(manufacturer)
 
     async def run() -> None:
-        with db_connect(settings.database_url) as conn:
+        with (
+            _exclusive_blob_operation(
+                settings.database_url, manufacturer
+            ) as operation_lock,
+            db_connect(settings.database_url) as conn,
+        ):
             normalizer = normalizer_for(conn, adapter)
             loader = Loader(conn, normalizer)
             namer = load_color_namer(conn)
@@ -252,10 +300,13 @@ def load(
                     else None
                 )
                 for snapshot in snapshots:
+                    operation_lock.check()
                     await ingest_product(snapshot, adapter, loader, media, namer)
+                    operation_lock.check()
 
             inherited = loader.inherit_line_cones()
             linked = loader.link_layering()
+            operation_lock.check()
             conn.commit()
 
         stats = loader.stats
@@ -305,7 +356,12 @@ def sync(
         stored = unchanged = ingested = 0
         failed: list[str] = []
 
-        with db_connect(settings.database_url) as conn:
+        with (
+            _exclusive_blob_operation(
+                settings.database_url, manufacturer
+            ) as operation_lock,
+            db_connect(settings.database_url) as conn,
+        ):
             loader = Loader(conn, normalizer_for(conn, adapter))
             namer = load_color_namer(conn)
             already = stored_object_keys(conn, settings.bucket_for(adapter.manufacturer.value))
@@ -335,7 +391,9 @@ def sync(
                 )
 
                 for ref in refs:
+                    operation_lock.check()
                     result = await fetcher.fetch(ref)
+                    operation_lock.check()
                     if result.outcome is not FetchOutcome.STORED or result.snapshot is None:
                         unchanged += 1
                         continue
@@ -347,10 +405,12 @@ def sync(
                     except Exception as exc:
                         log.warning("sync.ingest_failed", slug=ref.external_id, error=str(exc))
                         failed.append(ref.external_id)
+                    operation_lock.check()
                     conn.commit()
 
             cones = loader.inherit_line_cones()
             links = loader.link_layering()
+            operation_lock.check()
             conn.commit()
 
         typer.secho(
@@ -362,6 +422,150 @@ def sync(
             typer.secho("  failed: " + ", ".join(failed[:10]), fg=typer.colors.YELLOW)
 
     asyncio.run(run())
+
+
+@app.command()
+def gc(
+    manufacturer: ManufacturerOption = "amaco",
+    prune: Annotated[
+        bool, typer.Option(help="Delete orphaned objects instead of only reporting.")
+    ] = False,
+    force: Annotated[
+        bool, typer.Option(help="Override the high-orphan-fraction refusal.")
+    ] = False,
+    allow_local_prune: Annotated[
+        bool,
+        typer.Option(
+            help=(
+                "Acknowledge that loopback DB and Storage ports cannot prove they belong "
+                "to the same local Supabase stack."
+            )
+        ),
+    ] = False,
+    min_age_minutes: Annotated[
+        int,
+        typer.Option(
+            help="Only delete objects at least this old, to outrun the upload-then-commit gap."
+        ),
+    ] = 60,
+) -> None:
+    """Report — and, with `--prune`, delete — bucket objects no `glaze_images` row cites.
+
+    Report-only by default, so a bare `glaze-etl gc` is always safe to run. Deletion is
+    irreversible, so this requires a configured Storage credential, excludes concurrent loads
+    and syncs, and refuses outright (no override) when the database and Storage endpoint do
+    not identify the same Supabase project or when the computed reference set is empty
+    against a non-empty bucket. Local stacks need `--allow-local-prune` because their ports
+    carry no common project identity. It also refuses unless `--force` when the orphan
+    fraction looks implausibly high.
+    """
+    settings = Settings()
+    if prune and not (settings.supabase_url and settings.secret_key):
+        typer.secho(
+            "refusing: --prune requires SUPABASE_URL and SUPABASE_SECRET_KEY so deletion "
+            "cannot silently target the local blob cache",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+
+    bucket = settings.bucket_for(manufacturer)
+    operation = (
+        _exclusive_blob_operation(settings.database_url, manufacturer)
+        if prune
+        else nullcontext()
+    )
+    with operation as operation_lock, db_connection(
+        settings.database_url, autocommit=True
+    ) as conn:
+        info = conn.info
+        typer.echo(f"database {info.host}/{info.dbname}  bucket {bucket}")
+
+        referenced = referenced_shas(conn, manufacturer)
+        try:
+            ages = stored_object_ages(conn, bucket)
+        except psycopg.Error:
+            typer.secho(
+                "refusing: could not read Storage object metadata; gc cannot distinguish "
+                "an empty bucket from a database or permission failure",
+                fg=typer.colors.RED,
+            )
+            raise typer.Exit(code=1) from None
+
+        if prune and not database_matches_storage_project(
+            info.host,
+            info.user,
+            settings.supabase_url,
+            allow_local=allow_local_prune,
+        ):
+            typer.secho(
+                "refusing: the database connection and SUPABASE_URL do not identify "
+                "the same Supabase project; gc will not delete across an unknown or "
+                "mismatched project boundary",
+                fg=typer.colors.RED,
+            )
+            raise typer.Exit(code=1)
+
+        if reference_set_looks_wrong(len(referenced), len(ages)):
+            typer.secho(
+                "refusing: 0 referenced shas against a non-empty bucket — check "
+                "SUPABASE_DB_URL and the bucket pairing before running gc",
+                fg=typer.colors.RED,
+            )
+            raise typer.Exit(code=1)
+
+        sweep = plan_blob_sweep(
+            referenced,
+            ages,
+            now=datetime.now(UTC),
+            min_age=timedelta(minutes=min_age_minutes),
+        )
+        typer.echo(
+            f"referenced shas {sweep.referenced_sha_count}  "
+            f"bucket objects {sweep.bucket_key_count}  "
+            f"orphaned shas {len(sweep.orphaned_shas)}  "
+            f"orphaned objects {len(sweep.orphaned_keys)}  "
+            f"held back as too recent {len(sweep.recent_shas)}"
+        )
+        if sweep.unexpected_keys:
+            typer.secho(
+                f"warning: {len(sweep.unexpected_keys)} bucket object(s) did not parse as "
+                "a managed key and were left untouched",
+                fg=typer.colors.YELLOW,
+            )
+
+        if not sweep.orphaned_keys or not prune:
+            typer.echo("dry run: pass --prune to delete")
+            return
+
+        if (
+            exceeds_safety_threshold(len(sweep.orphaned_keys), sweep.bucket_key_count)
+            and not force
+        ):
+            typer.secho(
+                "refusing: orphan fraction exceeds the safety threshold — pass --force "
+                "to override",
+                fg=typer.colors.RED,
+            )
+            raise typer.Exit(code=1)
+
+        # Recomputed immediately before deleting as defense in depth. The shared advisory
+        # lock excludes load/sync for the whole prune; the age gate still protects objects
+        # uploaded by older code that did not participate in that lock.
+        newly_referenced = referenced_shas(conn, manufacturer)
+        to_delete = recheck_orphans(sweep.orphaned_keys, newly_referenced)
+
+        blobs = blob_store_for(settings, manufacturer)
+        if not isinstance(blobs, SupabaseBlobStore):
+            typer.secho(
+                "refusing: --prune selected a non-Supabase blob store",
+                fg=typer.colors.RED,
+            )
+            raise typer.Exit(code=1)
+        assert operation_lock is not None
+        operation_lock.check()
+        with blobs:
+            blobs.remove(sorted(to_delete))
+        typer.secho(f"deleted {len(to_delete)} object(s)", bold=True)
 
 
 @app.command()

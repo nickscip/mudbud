@@ -291,14 +291,37 @@ E4 is Python work on a pipeline that already runs.
   This change does not itself touch the hosted database or rerun the SW-511 reparse — clearing
   that queued parse issue is a deliberate follow-up for the owner now that a reparse is safe to
   run, not part of this change.
-- **E5 · Orphan blob GC** — **todo**, small, not urgent. The uploader skips keys already in
-  Storage and never deletes, so an image whose bytes change between crawls leaves its old
-  renditions behind. Measured on the hosted bucket (2026-07-29): `glaze_images` references
-  968 distinct shas, the bucket holds 970 × 4 objects — 8 orphans. Kilobytes today; the
-  weekly crawl (G2) is what would make them accumulate, and Mayco (Epic F) multiplies the
-  churn. The fix is a sweep that deletes objects whose sha no row references — belongs in
-  the ETL next to the uploader, gated behind a `--prune` flag rather than run implicitly,
-  because "referenced" must be computed against the same database the uploader wrote.
+- **E5 · Orphan blob GC** — **done.** Ships `glaze-etl gc --manufacturer <key>`: reports
+  by default (referenced/bucket counts, orphaned sha/object counts, anything held back
+  or unparseable), and only deletes with `--prune`. Destructive runs require a configured
+  Supabase Storage secret and verify the concrete target is `SupabaseBlobStore`, so a missing
+  credential cannot silently redirect deletion into the local byte cache. Structural refusals
+  exist because deletion is irreversible and a
+  local-database/hosted-bucket mismatch is a documented failure mode here
+  (`AGENTS.md`'s Mayco-sync anecdote): a hard refusal unless the database connection and
+  Storage URL identify the same Supabase project (including a real pooler-host check), an
+  explicit `--allow-local-prune` acknowledgement because loopback port pairs have no shared
+  project identity, a hard refusal when the computed reference set is empty against a non-empty
+  bucket, and a refusal (overridable with `--force`) when the orphan fraction exceeds 10% of a
+  bucket of at least 40 objects. Failure to read `storage.objects` aborts instead of being
+  presented as a clean empty-bucket dry run.
+  Two further timing safeguards close the gap between an upload and the database row
+  that cites it: a per-object minimum age (`--min-age-minutes`, default 60) excludes any
+  sha-group with a too-recent or unknown-age object from deletion for that run, and the
+  orphan set is recomputed against the database immediately before deleting, dropping
+  anything referenced since the report was printed. A transaction-level advisory lock held
+  on a dedicated connection also excludes `load`, `sync`, and another prune for the same
+  manufacturer; keeping its transaction open makes that lock valid through Supabase's
+  transaction-mode pooler. A heartbeat keeps the dedicated lock connection active, and
+  health checks immediately before reference commits and Storage deletion abort if it is
+  lost. CI proves exclusion and post-release acquisition through a real transaction-mode
+  PgBouncer, not only against direct Postgres; that test holds the lock across a configured
+  idle-transaction eviction threshold to prove the heartbeat is what preserves it. Ships the
+  sweep and its tests only —
+  it has not been run against the hosted database or bucket, which remains a deliberate
+  follow-up for the owner, exactly as E6's entry deferred the SW-511 reparse. The required
+  credentialed Storage checks include never-uploaded and already-removed keys so a benign
+  concurrent-prune race is verified as a no-op before any hosted run.
 
 ## Epic F — Mayco, and making ingestion source-agnostic
 
