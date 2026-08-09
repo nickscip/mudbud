@@ -125,6 +125,7 @@ class MediaProcessor:
         source_url: str,
         *,
         split_composite: bool = False,
+        expected_regions: int = 3,
         known_sha256: str | None = None,
     ) -> StoredImage:
         """Download once, derive sizes, measure colour.
@@ -151,7 +152,7 @@ class MediaProcessor:
         regions: tuple[RegionReading, ...] = ()
         refusal = ""
         if split_composite:
-            split = split_coats_composite(original)
+            split = split_coats_composite(original, expected_regions=expected_regions)
             if split.ok:
                 regions = tuple(
                     RegionReading(box, read_color(sample_region(original, box)), index)

@@ -23,6 +23,7 @@ from glaze_etl.core.composite_splitter import (
 )
 
 IMAGES = Path(__file__).parent / "fixtures" / "amaco" / "images"
+MAYCO_IMAGES = Path(__file__).parent / "fixtures" / "mayco" / "images"
 COMPOSITES = ["pc20-application-tiles", "pc30-application-tiles"]
 
 
@@ -127,6 +128,25 @@ class TestSplitting:
         assert lightness[1] > lightness[0]
         assert lightness[1] > lightness[2]
 
+    def test_mayco_four_count_fixture_resolves_four_ordered_non_overlapping_tiles(self) -> None:
+        with Image.open(MAYCO_IMAGES / "sw214-1234coats-cone5.jpg") as image:
+            result = split_coats_composite(image, expected_regions=4)
+            assert result.ok, result.reason
+            assert result.diagnostics["layout"] == "mayco_four_count"
+            assert len(result.boxes) == 4
+            hexes = [read_color(sample_region(image, box)).dominant_hex for box in result.boxes]
+        assert len(set(hexes)) == 4, hexes
+        for left, right in itertools.pairwise(result.boxes):
+            assert left.right == right.left
+            assert left.left < right.left
+
+    def test_an_unsupported_expected_count_refuses_with_a_diagnostic(self) -> None:
+        with Image.open(MAYCO_IMAGES / "sw214-1234coats-cone5.jpg") as image:
+            result = split_coats_composite(image, expected_regions=5)
+        assert not result.ok
+        assert result.boxes == ()
+        assert result.diagnostics["expected_regions"] == 5
+
 
 class TestRefusals:
     """A refusal is always safe: the caller keeps one whole-image appearance."""
@@ -146,6 +166,14 @@ class TestRefusals:
     def test_blank_image_is_refused(self) -> None:
         result = split_coats_composite(Image.new("RGB", (600, 400), (255, 255, 255)))
         assert not result.ok
+
+    def test_blank_image_is_refused_by_the_mayco_four_region_detector(self) -> None:
+        result = split_coats_composite(
+            Image.new("RGB", (1080, 1080), (255, 255, 255)), expected_regions=4
+        )
+        assert not result.ok
+        assert result.boxes == ()
+        assert result.reason == "no four-tile slab found"
 
     def test_every_refusal_explains_itself(self) -> None:
         """The reason lands in a parse_issues row, so it has to be actionable."""

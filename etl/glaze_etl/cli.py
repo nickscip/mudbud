@@ -269,13 +269,28 @@ def load(
             ) as operation_lock,
             db_connect(settings.database_url) as conn,
         ):
-            normalizer = normalizer_for(conn, adapter)
-            loader = Loader(conn, normalizer)
-            namer = load_color_namer(conn)
-
             # Must byte-match what the Fetcher stored, so build URLs via the adapter.
             urls = [str(adapter.product_ref(s).url) for s in slug] if slug else None
             snapshots = PostgresSnapshotStore(conn).newest_per_url(adapter.manufacturer, urls)
+            if slug:
+                found_urls = {str(snapshot.url) for snapshot in snapshots}
+                missing_slugs = [
+                    requested_slug
+                    for requested_slug, url in zip(slug, urls or (), strict=True)
+                    if url not in found_urls
+                ]
+                if missing_slugs:
+                    label = "slug" if len(missing_slugs) == 1 else "slugs"
+                    typer.secho(
+                        f"refusing: no stored snapshot for {manufacturer} {label}: "
+                        f"{', '.join(missing_slugs)}; run crawl first",
+                        fg=typer.colors.RED,
+                    )
+                    raise typer.Exit(code=1)
+
+            normalizer = normalizer_for(conn, adapter)
+            loader = Loader(conn, normalizer)
+            namer = load_color_namer(conn)
 
             log.info("load.start", snapshots=len(snapshots), images=images)
 

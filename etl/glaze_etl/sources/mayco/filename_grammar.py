@@ -214,17 +214,15 @@ def interpret_filename(
         cone = match.group(1)
         evidence["cone_from_alt"] = match.group(0)
 
-    # --- coats: recorded, never split ------------------------------------------------
+    # --- coats: only the verified four-count marker is a composite ------------------
     coats: str | None = None
     if match := _COATS_RE.search(stem):
         coats = match.group(1)
         consumed.append(match.span())
-        # Not ImageRole.COATS_COMPOSITE yet. F8 decided Mayco's brush-coat counts and
-        # AMACO's thickness words are separate manufacturer vocabularies, with ordinal
-        # meaningful only inside one brand. F8b must widen `CoatLevel` and teach the
-        # splitter Mayco's four-tile (`1234coats`) layout first. The image remains a real
-        # whole appearance, and the source count stays here for that work.
-        evidence["coats_unsplit"] = match.group(0)
+        if coats == "1234":
+            evidence["coats_composite"] = match.group(0)
+        else:
+            evidence["coats_unsplit"] = match.group(0)
 
     # --- form, and whether this depicts the line rather than the glaze ---------------
     form: FormKind | None = None
@@ -280,10 +278,14 @@ def _role(
 ) -> ImageRole:
     if layered_over is not None:
         return ImageRole.LAYERED
-    if combination or coats:
+    if combination:
         # Honest OTHER rather than a role that overstates. A four-thickness composite is
         # not "a single flat swatch", and colour-naming it as one would average four
         # coat thicknesses into a hero colour that matches none of them.
+        return ImageRole.OTHER
+    if coats == "1234":
+        return ImageRole.COATS_COMPOSITE
+    if coats:
         return ImageRole.OTHER
     if form is not None and form is not FormKind.FLAT_TILE:
         return ImageRole.IN_USE
