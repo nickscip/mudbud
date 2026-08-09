@@ -24,20 +24,30 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: "Cap products (0 = whole catalog). Useful for a smoke run."
+        description: "Cap products (0 = whole catalog). Ignored for a backfill."
         required: false
         default: "0"
       images:
-        description: "Download and measure images"
+        description: "Download and measure images, including during a backfill"
         type: boolean
         required: false
         default: true
       manufacturer:
-        description: "Which source to crawl"
+        description: "Which source to crawl or backfill"
         type: choice
         options: [all, amaco, mayco]
         required: false
         default: all
+      backfill:
+        description: "Reprocess one stored product instead of crawling"
+        type: boolean
+        required: false
+        default: false
+      slug:
+        description: "Stored product slug (required when backfill is enabled)"
+        type: string
+        required: false
+        default: ""
       environment:
         description: "Which project to load"
         type: choice
@@ -63,14 +73,35 @@ jobs:
       sources: ${{ steps.pick.outputs.sources }}
     steps:
       - id: pick
-        # A scheduled run carries no inputs at all, so an empty value means every source.
+        # A scheduled run carries no inputs at all, so an empty manufacturer means every source.
+        # Backfills stay deliberately narrow: `load` can replay a whole stored corpus, but a
+        # checkbox should not turn one intended product repair into hundreds of image downloads.
+        env:
+          BACKFILL: ${{ github.event.inputs.backfill }}
+          MANUFACTURER: ${{ github.event.inputs.manufacturer }}
+          SLUG: ${{ github.event.inputs.slug }}
         run: |
-          case "${{ github.event.inputs.manufacturer }}" in
+          if [ "$BACKFILL" = "true" ]; then
+            if [ -z "${SLUG//[[:space:]]/}" ]; then
+              echo "::error::a backfill requires a product slug" >&2
+              exit 1
+            fi
+            if [ -z "$MANUFACTURER" ] || [ "$MANUFACTURER" = "all" ]; then
+              echo "::error::a backfill requires one manufacturer, not all" >&2
+              exit 1
+            fi
+          fi
+
+          case "$MANUFACTURER" in
             ""|all) sources='["amaco","mayco"]' ;;
-            *)      sources='["${{ github.event.inputs.manufacturer }}"]' ;;
+            *)      sources="[\"$MANUFACTURER\"]" ;;
           esac
           echo "sources=$sources" >> "$GITHUB_OUTPUT"
-          echo "crawling: $sources" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$BACKFILL" = "true" ]; then
+            echo "backfilling: $MANUFACTURER/$SLUG" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "crawling: $sources" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   sync:
     needs: plan
@@ -119,24 +150,41 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: scripts/check-supabase-env.sh db url key
 
-      - name: Sync catalog
+      - name: Sync or backfill catalog
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        # No image cache is restored on purpose. A runner starts empty, but images are only
-        # fetched for products whose page actually changed, which in a steady week is close to
-        # none — so caching 259MB every run would cost more than it saves.
+          BACKFILL: ${{ github.event.inputs.backfill }}
+          BACKFILL_SLUG: ${{ github.event.inputs.slug }}
+          IMAGES: ${{ github.event.inputs.images }}
+          LIMIT: ${{ github.event.inputs.limit }}
+          MANUFACTURER: ${{ matrix.manufacturer }}
+        # No image cache is restored on purpose. An ordinary sync fetches images only for changed
+        # products, and a backfill is required above to name exactly one stored product. Caching
+        # 259MB on every run would cost more than either case saves.
         run: |
           # `set -o pipefail` is not optional here. Without it the exit status of this pipeline
           # is tee's, so the first dispatch of this workflow crashed on the very first product
           # and still reported success — the one outcome a scheduled job must never produce.
           set -o pipefail
-          uv run glaze-etl sync \
-            --manufacturer "${{ matrix.manufacturer }}" \
-            --limit "${{ github.event.inputs.limit || 0 }}" \
-            ${{ github.event.inputs.images == 'false' && '--no-images' || '' }} \
-            | tee sync.log
+          image_args=()
+          if [ "$IMAGES" = "false" ]; then
+            image_args+=(--no-images)
+          fi
+
+          if [ "$BACKFILL" = "true" ]; then
+            uv run glaze-etl load "$BACKFILL_SLUG" \
+              --manufacturer "$MANUFACTURER" \
+              "${image_args[@]}" \
+              | tee sync.log
+          else
+            uv run glaze-etl sync \
+              --manufacturer "$MANUFACTURER" \
+              --limit "${LIMIT:-0}" \
+              "${image_args[@]}" \
+              | tee sync.log
+          fi
 
       - name: Upload log
         if: always()
@@ -220,4 +268,3 @@ jobs:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: uv run glaze-etl report >> "$GITHUB_STEP_SUMMARY"
-
