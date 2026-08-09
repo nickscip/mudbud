@@ -165,7 +165,7 @@ def test_more_than_one_whole_image_appearance_row_fails_loudly_instead_of_choosi
         raw_filename="TC-3.jpg",
     )
 
-    with pytest.raises(ValueError, match=f"image {image_id} has 2"):
+    with pytest.raises(ValueError, match=f"image {image_id} has more than one"):
         loader.replace_appearances(glaze_id, image_id, payload, manufacturer="mayco")
 
     row = conn.execute(

@@ -134,7 +134,7 @@ class AppearanceWriter:
             return None
         if len(rows) > 1:
             raise ValueError(
-                f"image {image_id} has {len(rows)} non-composite appearance rows; "
+                f"image {image_id} has more than one non-composite appearance row; "
                 "expected at most one, so a text-only reparse cannot tell which one to "
                 "carry forward"
             )
