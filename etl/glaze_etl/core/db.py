@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 
 import psycopg
 
@@ -67,3 +68,52 @@ def stored_object_keys(conn: Connection, bucket: str) -> set[str]:
         conn.rollback()
         return set()
     return {str(r[0]) for r in rows}
+
+
+def referenced_shas(conn: Connection, manufacturer: str) -> set[str]:
+    """Every sha256 a manufacturer's `glaze_images` rows still cite.
+
+    Joins `glaze_images -> glazes -> manufacturers` on `manufacturers.key` — the same path
+    the app and loader already use. Getting this join backwards is how a sweep for one
+    brand could treat another brand's photographs as unreferenced, so it is worth stating
+    plainly: filter by `m.key`, never by anything storage-shaped.
+    """
+    rows = conn.execute(
+        """
+        select distinct gi.sha256
+        from glaze_images gi
+        join glazes g on g.id = gi.glaze_id
+        join manufacturers m on m.id = g.manufacturer_id
+        where m.key = %s and gi.sha256 is not null
+        """,
+        (manufacturer,),
+    ).fetchall()
+    return {str(r[0]) for r in rows}
+
+
+def stored_object_ages(conn: Connection, bucket: str) -> dict[str, datetime | None]:
+    """Every object key in a Storage bucket, mapped to when it was created.
+
+    `storage.objects.created_at` is provisioned by the Storage service, not by this
+    repo's own migrations, so its nullability is not something this codebase controls —
+    callers must treat a `None` age as "unknown", never as "old enough to delete". Wrapped
+    in the same fail-closed try/except as `stored_object_keys`: a bare Postgres with no
+    Supabase Storage schema installed degrades to an empty dict — a safe no-op sweep —
+    rather than raising.
+    """
+    try:
+        rows = conn.execute(
+            """
+            select o.name, o.created_at from storage.objects o
+            join storage.buckets b on b.id = o.bucket_id
+            where b.name = %s
+            """,
+            (bucket,),
+        ).fetchall()
+    except psycopg.Error:
+        conn.rollback()
+        return {}
+    return {
+        str(row[0]): row[1] if isinstance(row[1], datetime) else None
+        for row in rows
+    }

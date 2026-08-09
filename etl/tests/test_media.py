@@ -110,6 +110,25 @@ class TestDeduplication:
         assert storage_key(digest, "l") == f"l/{digest[:2]}/{digest}.jpg"
 
 
+class TestLocalBlobStoreRemove:
+    def test_remove_deletes_a_stored_key(self, tmp_path: Path) -> None:
+        blobs = LocalBlobStore(tmp_path)
+        key = storage_key(sha256_bytes(b"gone"), "l")
+        blobs.put(key, b"gone", "image/jpeg")
+
+        blobs.remove([key])
+
+        assert blobs.exists(key) is False
+
+    def test_removing_an_absent_key_does_not_raise(self, tmp_path: Path) -> None:
+        """`gc`'s pre-delete recheck can shrink the key list to nothing already deleted
+        by a concurrent run; that must not be an error."""
+        blobs = LocalBlobStore(tmp_path)
+        key = storage_key(sha256_bytes(b"never-existed"), "l")
+
+        blobs.remove([key])
+
+
 class TestFailures:
     async def test_non_image_payload_is_rejected_clearly(self, tmp_path: Path) -> None:
         processor, _, _ = build(b"<html>404 page</html>", tmp_path)

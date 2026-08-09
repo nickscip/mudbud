@@ -19,11 +19,19 @@ from glaze_etl.core.config import Settings
 
 log = structlog.get_logger(__name__)
 
+# storage3's bucket-proxy `remove` sends every path in one DELETE request body with no
+# client-side cap (`_sync/file_api.py`'s `remove` — confirmed by reading its source, not
+# just its signature). Chunked anyway, defensively, against a server-side limit that
+# client's source does not rule out.
+_REMOVE_CHUNK_SIZE = 100
+
 
 class BlobStore(Protocol):
     def exists(self, key: str) -> bool: ...
 
     def put(self, key: str, data: bytes, content_type: str) -> str: ...
+
+    def remove(self, keys: list[str]) -> None: ...
 
 
 class LocalBlobStore:
@@ -45,6 +53,10 @@ class LocalBlobStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         return str(path)
+
+    def remove(self, keys: list[str]) -> None:
+        for key in keys:
+            (self._root / key).unlink(missing_ok=True)
 
 
 class SupabaseBlobStore:
@@ -118,6 +130,11 @@ class SupabaseBlobStore:
         )
         self._known.add(key)
         return key
+
+    def remove(self, keys: list[str]) -> None:
+        for start in range(0, len(keys), _REMOVE_CHUNK_SIZE):
+            self._bucket.remove(keys[start : start + _REMOVE_CHUNK_SIZE])
+        self._known.difference_update(keys)
 
     def signed_url(self, key: str, expires_in: int = 3600) -> str:
         """A time-limited read URL. The app never receives a permanent one."""

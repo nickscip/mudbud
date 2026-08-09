@@ -291,14 +291,21 @@ E4 is Python work on a pipeline that already runs.
   This change does not itself touch the hosted database or rerun the SW-511 reparse — clearing
   that queued parse issue is a deliberate follow-up for the owner now that a reparse is safe to
   run, not part of this change.
-- **E5 · Orphan blob GC** — **todo**, small, not urgent. The uploader skips keys already in
-  Storage and never deletes, so an image whose bytes change between crawls leaves its old
-  renditions behind. Measured on the hosted bucket (2026-07-29): `glaze_images` references
-  968 distinct shas, the bucket holds 970 × 4 objects — 8 orphans. Kilobytes today; the
-  weekly crawl (G2) is what would make them accumulate, and Mayco (Epic F) multiplies the
-  churn. The fix is a sweep that deletes objects whose sha no row references — belongs in
-  the ETL next to the uploader, gated behind a `--prune` flag rather than run implicitly,
-  because "referenced" must be computed against the same database the uploader wrote.
+- **E5 · Orphan blob GC** — **done.** Ships `glaze-etl gc --manufacturer <key>`: reports
+  by default (referenced/bucket counts, orphaned sha/object counts, anything held back
+  or unparseable), and only deletes with `--prune`. Two structural refusals exist
+  because deletion is irreversible and a
+  local-database/hosted-bucket mismatch is a documented failure mode here
+  (`AGENTS.md`'s Mayco-sync anecdote): a hard, non-overridable refusal when the computed
+  reference set is empty against a non-empty bucket, and a refusal (overridable with
+  `--force`) when the orphan fraction exceeds 10% of a bucket of at least 40 objects.
+  Two further timing safeguards close the gap between an upload and the database row
+  that cites it: a per-object minimum age (`--min-age-minutes`, default 60) excludes any
+  sha-group with a too-recent or unknown-age object from deletion for that run, and the
+  orphan set is recomputed against the database immediately before deleting, dropping
+  anything referenced since the report was printed. Ships the sweep and its tests only —
+  it has not been run against the hosted database or bucket, which remains a deliberate
+  follow-up for the owner, exactly as E6's entry deferred the SW-511 reparse.
 
 ## Epic F — Mayco, and making ingestion source-agnostic
 

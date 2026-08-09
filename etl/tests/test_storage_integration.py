@@ -20,7 +20,7 @@ from collections.abc import Iterator
 import httpx
 import pytest
 
-from glaze_etl.core.blob_store import SupabaseBlobStore
+from glaze_etl.core.blob_store import _REMOVE_CHUNK_SIZE, SupabaseBlobStore
 from glaze_etl.core.media import storage_key
 
 URL = os.environ.get("TEST_SUPABASE_URL")
@@ -57,6 +57,24 @@ class TestRoundTrip:
         store.put(key, PAYLOAD, "image/jpeg")
         store.put(key, PAYLOAD, "image/jpeg")
         assert store.exists(key) is True
+
+
+class TestRemove:
+    def test_remove_then_absent(self, store: SupabaseBlobStore, key: str) -> None:
+        store.put(key, PAYLOAD, "image/jpeg")
+        store.remove([key])
+        assert store.exists(key) is False
+
+    def test_remove_multiple_chunks(self, store: SupabaseBlobStore) -> None:
+        """The only test that actually runs the chunking loop against a real batch,
+        rather than merely typechecking it."""
+        keys = [storage_key(uuid.uuid4().hex * 2, "l") for _ in range(_REMOVE_CHUNK_SIZE + 5)]
+        for one_key in keys:
+            store.put(one_key, PAYLOAD, "image/jpeg")
+
+        store.remove(keys)
+
+        assert all(store.exists(one_key) is False for one_key in keys)
 
 
 class TestPrivacy:

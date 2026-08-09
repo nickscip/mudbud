@@ -9,6 +9,7 @@ rather than a second implementation that can drift.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -17,11 +18,17 @@ import psycopg
 import structlog
 import typer
 
+from glaze_etl.core.blob_gc import (
+    exceeds_safety_threshold,
+    plan_blob_sweep,
+    recheck_orphans,
+    reference_set_looks_wrong,
+)
 from glaze_etl.core.blob_store import blob_store_for
 from glaze_etl.core.color_namer import load_color_namer
 from glaze_etl.core.config import Settings
 from glaze_etl.core.db import connect as db_connect
-from glaze_etl.core.db import stored_object_keys
+from glaze_etl.core.db import referenced_shas, stored_object_ages, stored_object_keys
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import MediaProcessor
@@ -362,6 +369,96 @@ def sync(
             typer.secho("  failed: " + ", ".join(failed[:10]), fg=typer.colors.YELLOW)
 
     asyncio.run(run())
+
+
+@app.command()
+def gc(
+    manufacturer: ManufacturerOption = "amaco",
+    prune: Annotated[
+        bool, typer.Option(help="Delete orphaned objects instead of only reporting.")
+    ] = False,
+    force: Annotated[
+        bool, typer.Option(help="Override the high-orphan-fraction refusal.")
+    ] = False,
+    min_age_minutes: Annotated[
+        int,
+        typer.Option(
+            help="Only delete objects at least this old, to outrun the upload-then-commit gap."
+        ),
+    ] = 60,
+) -> None:
+    """Report — and, with `--prune`, delete — bucket objects no `glaze_images` row cites.
+
+    Report-only by default, so a bare `glaze-etl gc` is always safe to run. Deletion is
+    irreversible, so this refuses outright (no override) when the computed reference set
+    is empty against a non-empty bucket — the shape a wrong database/bucket pairing
+    produces — and refuses unless `--force` when the orphan fraction looks implausibly
+    high.
+    """
+    settings = Settings()
+    bucket = settings.bucket_for(manufacturer)
+    conn = db_connect(settings.database_url, autocommit=True)
+    try:
+        info = conn.info
+        typer.echo(f"database {info.host}/{info.dbname}  bucket {bucket}")
+
+        referenced = referenced_shas(conn, manufacturer)
+        ages = stored_object_ages(conn, bucket)
+
+        if reference_set_looks_wrong(len(referenced), len(ages)):
+            typer.secho(
+                "refusing: 0 referenced shas against a non-empty bucket — check "
+                "SUPABASE_DB_URL and the bucket pairing before running gc",
+                fg=typer.colors.RED,
+            )
+            raise typer.Exit(code=1)
+
+        sweep = plan_blob_sweep(
+            referenced,
+            ages,
+            now=datetime.now(UTC),
+            min_age=timedelta(minutes=min_age_minutes),
+        )
+        typer.echo(
+            f"referenced shas {sweep.referenced_sha_count}  "
+            f"bucket objects {sweep.bucket_key_count}  "
+            f"orphaned shas {len(sweep.orphaned_shas)}  "
+            f"orphaned objects {len(sweep.orphaned_keys)}  "
+            f"held back as too recent {len(sweep.recent_shas)}"
+        )
+        if sweep.unexpected_keys:
+            typer.secho(
+                f"warning: {len(sweep.unexpected_keys)} bucket object(s) did not parse as "
+                "a managed key and were left untouched",
+                fg=typer.colors.YELLOW,
+            )
+
+        if not sweep.orphaned_keys or not prune:
+            typer.echo("dry run: pass --prune to delete")
+            return
+
+        if (
+            exceeds_safety_threshold(len(sweep.orphaned_keys), sweep.bucket_key_count)
+            and not force
+        ):
+            typer.secho(
+                "refusing: orphan fraction exceeds the safety threshold — pass --force "
+                "to override",
+                fg=typer.colors.RED,
+            )
+            raise typer.Exit(code=1)
+
+        # Recomputed immediately before deleting, so nothing referenced since the report
+        # above was printed gets swept — the age gate bounds upload-to-commit, not how
+        # long a human sits on this report before choosing --prune.
+        newly_referenced = referenced_shas(conn, manufacturer)
+        to_delete = recheck_orphans(sweep.orphaned_keys, newly_referenced)
+
+        blobs = blob_store_for(settings, manufacturer)
+        blobs.remove(sorted(to_delete))
+        typer.secho(f"deleted {len(to_delete)} object(s)", bold=True)
+    finally:
+        conn.close()
 
 
 @app.command()
