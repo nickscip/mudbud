@@ -26,7 +26,8 @@ Facts to keep in mind while reading:
   products filed under no line at all), and every one has an appearance and colour terms.
   `data_quality.sql` passes against the hosted database, per-brand floors included. One
   parse issue: a single image of SW-511 hit a transient Storage error and is filed for
-  triage — clearing it needs a reparse, which E6 makes lossy, so it waits on E6.
+  triage — clearing it needs a reparse, which E6 (now done) had made lossy; running that
+  reparse against hosted is a follow-up for the owner, not part of E6 itself.
 - **`etl/.env` points `SUPABASE_DB_URL` at the hosted project, not at the local stack.** So
   a bare `glaze-etl sync` writes to production. Override the three `SUPABASE_*` variables on
   the command line for local work. This is worth knowing before the first run, not after.
@@ -269,21 +270,27 @@ E4 is Python work on a pipeline that already runs.
   seconds, so iteration is cheap and needs no re-crawl. F5 settled the seam question: the
   splitter stays an AMACO-layout utility a source opts into via `interpret_image`, and the
   ordinal-to-coat-level mapping lives on the adapter (`coat_order`).
-- **E6 · A text-only reparse discards measured colour** — **todo, real, found by tripping over
-  it.** `AppearanceWriter.existing_pixel_data` exists so `reparse` / `load --no-images` does not
-  destroy pixel-derived data, and its docstring says carrying it forward means "reparse updates
-  exactly what it re-derived". It only half does: the query is
-  `where a.image_id = %s and a.crop_bbox is not null` joined through `coat_levels`, so it
-  carries **split composite regions only**. An ordinary single-swatch appearance has no
-  `coat_level_id` and no crop box, so its `hex`, `hex2` and six Lab columns are deleted and not
-  restored.
-  Observed: a `load --manufacturer mayco --no-images` left all 24 Mayco appearances with
-  `hex is null` while AMACO's 1325 all have one. The visible symptom is a swatch tile with no
-  colour fallback and a glaze that drops out of any colour-distance ordering — quiet, and it
-  looks like the crawl's fault rather than the reparse's.
-  Affects AMACO identically; it has simply not had a text-only reparse since its load. The fix
-  is to carry the non-composite row's colour too, which means the query cannot require
-  `crop_bbox`.
+- **E6 · A text-only reparse discards measured colour** — **done.** The root cause was
+  `existing_pixel_data`'s `crop_bbox is not null` filter joined through `coat_levels`, which an
+  ordinary appearance's null `coat_level_id` and null `crop_bbox` can never satisfy, so a
+  text-only run deleted-then-reinserted every non-composite appearance with `hex`, `hex2` and
+  all six Lab columns null. The fix adds `AppearanceWriter.existing_singleton_colour` to carry
+  the whole-image row's colour forward the same way `existing_pixel_data` already did for split
+  composite regions — and it raises loudly rather than guessing if it ever finds more than one
+  such row for an image, since nothing constrains that at the schema level and no current write
+  path produces it. A schema-permitted composite row with a crop box but no resolved coat level
+  remains outside both carry-forward readers; `normalizer_for` prevents that state in every live
+  ingestion path today, so widening the readers for it is out of scope. `Loader.upsert_image`'s
+  `ON CONFLICT` clause had the identical bug shape for
+  `glaze_images.storage_path` / `sha256` / `width` / `height`, including when a run's image fetch
+  fails outright and not only when images are skipped entirely; those four columns now coalesce
+  onto the prior value instead of overwriting it with null.
+  Regression coverage runs `pipeline.ingest_product` end-to-end against a real, disposable
+  Postgres rather than only unit-level writer calls, plus a direct `AppearanceWriter` test for
+  the schema-permitted-but-pipeline-unreachable duplicate-row case.
+  This change does not itself touch the hosted database or rerun the SW-511 reparse — clearing
+  that queued parse issue is a deliberate follow-up for the owner now that a reparse is safe to
+  run, not part of this change.
 - **E5 · Orphan blob GC** — **todo**, small, not urgent. The uploader skips keys already in
   Storage and never deletes, so an image whose bytes change between crawls leaves its old
   renditions behind. Measured on the hosted bucket (2026-07-29): `glaze_images` references

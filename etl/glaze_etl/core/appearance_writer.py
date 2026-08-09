@@ -9,7 +9,7 @@ catalog schema does.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 import psycopg
@@ -41,6 +41,16 @@ def _as_lab(*values: object) -> tuple[float, float, float] | None:
     return (numbers[0], numbers[1], numbers[2]) if len(numbers) == 3 else None
 
 
+@dataclass(frozen=True)
+class _CarriedColour:
+    """A non-composite appearance's measured colour, read back for a text-only reparse."""
+
+    hex_dominant: str | None
+    hex_secondary: str | None
+    lab: tuple[float, float, float] | None
+    lab_secondary: tuple[float, float, float] | None
+
+
 class AppearanceWriter:
     def __init__(
         self,
@@ -62,7 +72,10 @@ class AppearanceWriter:
         three-region composites into 44 single rows — observed twice, appearances dropping
         1325 -> 1237 both times.
 
-        Carrying the pixel side forward means `reparse` updates exactly what it re-derived.
+        This only covers split composite regions — rows with a `crop_bbox`, joined through
+        `coat_levels` for their thickness. An ordinary, single-swatch appearance has neither,
+        so it is never returned here; `existing_singleton_colour` is the other half that
+        carries *that* row's colour forward.
 
         F8b seam: `CoatLevel(str(key))` below is AMACO's four thickness words, so this
         method cannot read back a Mayco row keyed '1'-'4'. Unreachable today — Mayco's
@@ -95,6 +108,47 @@ class AppearanceWriter:
             )
         return tuple(out)
 
+    def existing_singleton_colour(self, image_id: int) -> _CarriedColour | None:
+        """The whole-image row's measured colour already recorded for this image, if any.
+
+        Complements `existing_pixel_data` for the live ordinary-image path: an ordinary
+        appearance has no `crop_bbox` and no `coat_level_id`, so it never joins through
+        `coat_levels` and was never carried forward by that method (roadmap E6). A
+        schema-permitted composite row with a crop box but no resolved coat level remains
+        outside both readers; `normalizer_for` prevents that state in the live pipeline.
+
+        Fetches up to two rows rather than one. Nothing at the schema level stops a second
+        `crop_bbox is null` row existing for one image, and silently picking one with
+        `limit 1` would make a reparse arbitrarily discard the other. No current write path
+        produces that state, so this raises loudly instead of guessing which row is right,
+        the same way the manufacturer mismatch check above already does.
+        """
+        rows = self._conn.execute(
+            """
+            select hex, hex2, lab_l, lab_a, lab_b, lab2_l, lab2_a, lab2_b
+            from appearances
+            where image_id = %s and crop_bbox is null
+            limit 2
+            """,
+            (image_id,),
+        ).fetchall()
+        if not rows:
+            return None
+        if len(rows) > 1:
+            raise ValueError(
+                f"image {image_id} has more than one non-composite appearance row; "
+                "expected at most one, so a text-only reparse cannot tell which one to "
+                "carry forward"
+            )
+        row = rows[0]
+        hex1, hex2 = row[0], row[1]
+        return _CarriedColour(
+            hex_dominant=str(hex1) if hex1 else None,
+            hex_secondary=str(hex2) if hex2 else None,
+            lab=_as_lab(row[2], row[3], row[4]),
+            lab_secondary=_as_lab(row[5], row[6], row[7]),
+        )
+
     def replace(
         self, glaze_id: int, image_id: int, payload: ImagePayload, *, manufacturer: str
     ) -> int:
@@ -122,6 +176,18 @@ class AppearanceWriter:
             carried = self.existing_pixel_data(image_id)
             if carried:
                 payload = replace(payload, regions=carried)
+            else:
+                # Not a composite — the ordinary, single-swatch case E6 was about. Carry
+                # that row's own colour forward instead of leaving it null.
+                singleton = self.existing_singleton_colour(image_id)
+                if singleton is not None:
+                    payload = replace(
+                        payload,
+                        hex_dominant=singleton.hex_dominant,
+                        hex_secondary=singleton.hex_secondary,
+                        lab=singleton.lab,
+                        lab_secondary=singleton.lab_secondary,
+                    )
 
         self._conn.execute("delete from appearances where image_id = %s", (image_id,))
 

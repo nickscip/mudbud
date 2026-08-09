@@ -218,10 +218,14 @@ class Loader:
               role, raw_filename, parse_confidence, evidence
             ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             on conflict (glaze_id, source_url) do update set
-              storage_path = excluded.storage_path,
-              sha256 = excluded.sha256,
-              width = excluded.width,
-              height = excluded.height,
+              -- storage_path/sha256/width/height are exclusively MediaProcessor output.
+              -- A text-only run (media=None) or one where media.process raised leaves
+              -- them null on `excluded`, and coalescing is what stops that null from
+              -- overwriting a value a previous run already measured (roadmap E6).
+              storage_path = coalesce(excluded.storage_path, glaze_images.storage_path),
+              sha256 = coalesce(excluded.sha256, glaze_images.sha256),
+              width = coalesce(excluded.width, glaze_images.width),
+              height = coalesce(excluded.height, glaze_images.height),
               role = excluded.role,
               parse_confidence = excluded.parse_confidence,
               evidence = excluded.evidence
