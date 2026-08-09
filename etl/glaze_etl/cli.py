@@ -32,6 +32,8 @@ from glaze_etl.core.color_namer import load_color_namer
 from glaze_etl.core.config import Settings
 from glaze_etl.core.db import (
     BlobOperationAlreadyRunning,
+    BlobOperationLock,
+    BlobOperationLockLost,
     exclusive_blob_operation,
     referenced_shas,
     stored_object_ages,
@@ -69,14 +71,22 @@ ManufacturerOption = Annotated[str, typer.Option(help="Source key, e.g. amaco.")
 
 
 @contextmanager
-def _exclusive_blob_operation(database_url: str, manufacturer: str) -> Iterator[None]:
+def _exclusive_blob_operation(
+    database_url: str, manufacturer: str
+) -> Iterator[BlobOperationLock]:
     """Turn a failed non-blocking lock acquisition into a concise CLI refusal."""
     try:
-        with exclusive_blob_operation(database_url, manufacturer):
-            yield
+        with exclusive_blob_operation(database_url, manufacturer) as operation_lock:
+            yield operation_lock
     except BlobOperationAlreadyRunning:
         typer.secho(
             f"refusing: another sync, load, or gc prune is active for {manufacturer}",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1) from None
+    except BlobOperationLockLost:
+        typer.secho(
+            f"aborting: lost the database lock protecting blob operations for {manufacturer}",
             fg=typer.colors.RED,
         )
         raise typer.Exit(code=1) from None
@@ -254,7 +264,9 @@ def load(
 
     async def run() -> None:
         with (
-            _exclusive_blob_operation(settings.database_url, manufacturer),
+            _exclusive_blob_operation(
+                settings.database_url, manufacturer
+            ) as operation_lock,
             db_connect(settings.database_url) as conn,
         ):
             normalizer = normalizer_for(conn, adapter)
@@ -288,10 +300,13 @@ def load(
                     else None
                 )
                 for snapshot in snapshots:
+                    operation_lock.check()
                     await ingest_product(snapshot, adapter, loader, media, namer)
+                    operation_lock.check()
 
             inherited = loader.inherit_line_cones()
             linked = loader.link_layering()
+            operation_lock.check()
             conn.commit()
 
         stats = loader.stats
@@ -342,7 +357,9 @@ def sync(
         failed: list[str] = []
 
         with (
-            _exclusive_blob_operation(settings.database_url, manufacturer),
+            _exclusive_blob_operation(
+                settings.database_url, manufacturer
+            ) as operation_lock,
             db_connect(settings.database_url) as conn,
         ):
             loader = Loader(conn, normalizer_for(conn, adapter))
@@ -374,7 +391,9 @@ def sync(
                 )
 
                 for ref in refs:
+                    operation_lock.check()
                     result = await fetcher.fetch(ref)
+                    operation_lock.check()
                     if result.outcome is not FetchOutcome.STORED or result.snapshot is None:
                         unchanged += 1
                         continue
@@ -386,10 +405,12 @@ def sync(
                     except Exception as exc:
                         log.warning("sync.ingest_failed", slug=ref.external_id, error=str(exc))
                         failed.append(ref.external_id)
+                    operation_lock.check()
                     conn.commit()
 
             cones = loader.inherit_line_cones()
             links = loader.link_layering()
+            operation_lock.check()
             conn.commit()
 
         typer.secho(
@@ -431,7 +452,7 @@ def gc(
     """Report — and, with `--prune`, delete — bucket objects no `glaze_images` row cites.
 
     Report-only by default, so a bare `glaze-etl gc` is always safe to run. Deletion is
-    irreversible, so this requires a hosted Storage credential, excludes concurrent loads
+    irreversible, so this requires a configured Storage credential, excludes concurrent loads
     and syncs, and refuses outright (no override) when the database and Storage endpoint do
     not identify the same Supabase project or when the computed reference set is empty
     against a non-empty bucket. Local stacks need `--allow-local-prune` because their ports
@@ -453,7 +474,9 @@ def gc(
         if prune
         else nullcontext()
     )
-    with operation, db_connection(settings.database_url, autocommit=True) as conn:
+    with operation as operation_lock, db_connection(
+        settings.database_url, autocommit=True
+    ) as conn:
         info = conn.info
         typer.echo(f"database {info.host}/{info.dbname}  bucket {bucket}")
 
@@ -538,6 +561,8 @@ def gc(
                 fg=typer.colors.RED,
             )
             raise typer.Exit(code=1)
+        assert operation_lock is not None
+        operation_lock.check()
         with blobs:
             blobs.remove(sorted(to_delete))
         typer.secho(f"deleted {len(to_delete)} object(s)", bold=True)

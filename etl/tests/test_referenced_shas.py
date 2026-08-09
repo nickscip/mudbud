@@ -25,6 +25,7 @@ from glaze_etl.core.db import (
 )
 
 DSN = os.environ.get("TEST_SUPABASE_DB_URL")
+POOLER_DSN = os.environ.get("TEST_PGBOUNCER_DB_URL")
 pytestmark = pytest.mark.skipif(not DSN, reason="TEST_SUPABASE_DB_URL not set")
 
 type Connection = psycopg.Connection[tuple[object, ...]]
@@ -120,15 +121,26 @@ def test_two_rows_sharing_one_sha_under_the_same_manufacturer_yield_one_entry(
     assert shared_sha in result
 
 
-def test_blob_operation_lock_excludes_a_second_process() -> None:
-    assert DSN
+def _assert_blob_operation_lock_exclusion(dsn: str) -> None:
     with (
-        exclusive_blob_operation(DSN, "amaco"),
+        exclusive_blob_operation(dsn, "amaco", heartbeat_seconds=0.01),
         pytest.raises(BlobOperationAlreadyRunning),
-        exclusive_blob_operation(DSN, "amaco"),
+        exclusive_blob_operation(dsn, "amaco", heartbeat_seconds=0.01),
     ):
         pytest.fail("the same manufacturer lock was acquired twice")
 
     # Releasing the first transaction must make the lock available again.
-    with exclusive_blob_operation(DSN, "amaco"):
+    with exclusive_blob_operation(dsn, "amaco", heartbeat_seconds=0.01):
         pass
+
+
+def test_blob_operation_lock_excludes_a_second_process() -> None:
+    assert DSN
+    _assert_blob_operation_lock_exclusion(DSN)
+
+
+@pytest.mark.skipif(not POOLER_DSN, reason="TEST_PGBOUNCER_DB_URL not set")
+def test_blob_operation_lock_through_a_transaction_pooler() -> None:
+    """Exercise the backend-pinning assumption against real transaction-mode PgBouncer."""
+    assert POOLER_DSN
+    _assert_blob_operation_lock_exclusion(POOLER_DSN)

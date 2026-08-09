@@ -312,7 +312,10 @@ E4 is Python work on a pipeline that already runs.
   anything referenced since the report was printed. A transaction-level advisory lock held
   on a dedicated connection also excludes `load`, `sync`, and another prune for the same
   manufacturer; keeping its transaction open makes that lock valid through Supabase's
-  transaction-mode pooler. Ships the sweep and its tests only —
+  transaction-mode pooler. A heartbeat keeps the dedicated lock connection active, and
+  health checks immediately before reference commits and Storage deletion abort if it is
+  lost. CI proves exclusion and post-release acquisition through a real transaction-mode
+  PgBouncer, not only against direct Postgres. Ships the sweep and its tests only —
   it has not been run against the hosted database or bucket, which remains a deliberate
   follow-up for the owner, exactly as E6's entry deferred the SW-511 reparse. The required
   credentialed Storage checks include never-uploaded and already-removed keys so a benign
