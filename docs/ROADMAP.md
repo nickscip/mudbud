@@ -86,21 +86,30 @@ the text field now owns the first and the filter modal owns the second.
   Expo Go stays the physical-device loop. Still owed: a live result count in the sheet. Revisit
   the presentation only if a real bottom sheet improves the device UX enough to justify its Expo
   Go compatibility spike.
-- **A6 · Pagination** — **partial; implemented locally, hosted rollout pending.** Catalog search
-  now requests 40 visible rows plus one sentinel, advances by exactly the visible count, merges
-  match/near tiers independently, deduplicates ids, terminates zero-new-id loops, and exposes a
-  guarded infinite-scroll footer with append-only retry. Its request generation is keyed by
-  canonical query content rather than filter object identity, so note autosaves do not reset an
-  accumulated browse; stale append results, errors, and cleanup are ticket-guarded. Append-only
-  migration `20260805000100` makes `(tier, rank, code, id)` a total order in both the page CTE and
-  final result. Pure client tests cover the sentinel/cursor formula and merge behavior; schema
-  tests reconstruct an exact collision-heavy browse and retain the aggregation fence at offsets
-  0 and 960. Local schema replay, typecheck, device DB tests, and iOS export pass. The hosted ledger
-  agrees through the prior migration and reports only `20260805000100` as intentionally
-  unrecorded. Still owed before **done**: commit and deploy that migration only through
-  `deploy-schema.yml`, then prove exactly 982 rows / 982 unique ids / 25 pages (22 on the last) and
-  the 435-match-plus-one-near `blue` boundary on hosted data. OFFSET is accepted at today’s scale;
-  replace it with keyset pagination before 10,000 rows or more-than-weekly catalog writes.
+- **A6 · Pagination** — **partial; deployed and proved on hosted, device checks outstanding.**
+  Catalog search now requests 40 visible rows plus one sentinel, advances by exactly the visible
+  count, merges match/near tiers independently, deduplicates ids, terminates zero-new-id loops,
+  and exposes a guarded infinite-scroll footer with append-only retry. Its request generation is
+  keyed by canonical query content rather than filter object identity, so note autosaves do not
+  reset an accumulated browse; stale append results, errors, and cleanup are ticket-guarded.
+  Append-only migration `20260805000100` makes `(tier, rank, code, id)` a total order in both the
+  page CTE and final result. Pure client tests cover the sentinel/cursor formula and merge
+  behavior; schema tests reconstruct an exact collision-heavy browse and retain the aggregation
+  fence at offsets 0 and 960. Local schema replay, typecheck, device DB tests, and iOS export pass.
+  **That migration reached the hosted project on 2026-08-09** through `deploy-schema.yml`, and the
+  acceptance ran against it inside one repeatable-read snapshot, so a mid-run catalog change could
+  not be misread as a pagination bug. The expectations were *derived* from a live `count(*)` rather
+  than asserted from the 2026-07-30 reading — and then matched it: 982 rows, 982 unique ids, 25
+  pages, 22 on the last. Concatenating adjacent pages gave zero duplicates, zero ids missing, zero
+  ids not in the catalog, and **zero positions disagreeing with a single uncapped call**, which is
+  the property the total order actually buys and the one a non-deterministic tie-break breaks at a
+  page boundary. `blue` returned 436 rows / 436 unique ids — 435 match then 1 near, last match at
+  position 435, first near at 436, and no near row anywhere before a match.
+  Still owed before **done**, and all three need a running app rather than SQL
+  (`docs/A6_PAGINATION_PLAN.md:98-100`): changing query or filter state mid-append never appending
+  stale rows, an append failure preserving loaded cards and recovering through the footer retry,
+  and Wishlist / Owned / Favourites staying complete and locally ordered. OFFSET is accepted at
+  today’s scale; replace it with keyset pagination before 10,000 rows or more-than-weekly writes.
 - **A7 · Brand facet** — **done.** The filter vocabulary reads `manufacturers.name`, so the
   choices are labelled `AMACO (American Art Clay Co.)` and `Mayco` rather than manufactured by
   uppercasing database keys. Multi-select sends manufacturer ids through the existing
@@ -440,6 +449,18 @@ the "no edits" claim above is now over a smaller surface than the branch itself 
   - Sequencing that mattered: the migration had to reach every hosted environment before the
     scoped query merged. Old ETL on the new schema was safe (the key sets were disjoint);
     new ETL on the old schema is not.
+  - **The sequencing was not honoured, and recording that is the point.** PR #17 opened with
+    "Do not merge until the schema is deployed" and merged on 2026-08-08 with `20260807000100`
+    still unrecorded on hosted, so `main` spent about three hours holding an ETL that queried a
+    column no hosted database had. What made it survivable is that nothing runs the ETL on
+    demand: the only caller is `sync-catalog.yml`'s Monday 09:00 UTC cron, and the failure would
+    have been `UndefinedColumn` raised at pipeline construction, before a single write. Loud,
+    non-destructive, and about a day and a half of slack. Closed on **2026-08-09** by a
+    `deploy-schema.yml` dispatch, then proved by a capped `--limit 3` sync whose AMACO and Mayco
+    legs both completed — `changed 3 / ingested 3` and `unchanged 3` respectively, `failed 0` on
+    each. A gate whose only enforcement is a sentence in a pull-request description is not a gate.
+  - The deploy also settled a G1 question as a side effect — the two GitHub environments turn out
+    to be one database. Recorded there rather than here.
 - **F8b · The four-tile Mayco splitter** — **todo**, and what is actually left of the coat
   axis. Mayco's composites hold **four** tiles captioned by brush-coat count
   (`sw214_1234coats_cone6_web.jpg`, alt `"1, 2, 3, 4 coats, cone 6 oxidation"`), while
@@ -547,6 +568,15 @@ Ordered roughly by what unblocks what — G1 gates everything.
   orphan objects (see E5). Still open: the dev-vs-prod project split, deliberately
   deferred to land with G4/G6 — the hard deadline is before the first external TestFlight
   build, because retrofitting means moving live testers to a different backend.
+  **The split is now measured, not assumed: the `staging` and `production` GitHub environments
+  hold DSNs for the same database.** Worth stating plainly because the environment names imply
+  otherwise, and a `SUPABASE_DB_URL` secret cannot be read from a checkout. Proved on 2026-08-09
+  during F8's deploy: both dry runs printed an identical ledger, and after applying to `staging`
+  a second `production` dry run reported `ledger agrees with 22 migration files` with both new
+  versions recorded — without a production apply ever running. So a `staging` dispatch of either
+  workflow reaches the database the app reads, `sync-catalog.yml`'s default environment writes to
+  production data, and the required reviewer on `production` guards a name rather than a
+  boundary.
 - **G2 · Point the sync at the hosted project** — **done**. The workflow
   already exists: `.github/workflows/sync-catalog.yml` runs weekly (Monday 09:00 UTC) plus
   `workflow_dispatch`, and reads `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_DB_URL`
@@ -812,8 +842,9 @@ Not a commitment, just the dependency-respecting reading of the above.
    clay-name half, and F15/F16.
 6. **Search depth** — A3's line/opacity client work, A4's wiring half and A7 are done; surface
    waits on populated data. A5 now has the Expo Go-safe modal shell but still needs a live result
-   count. A6 pagination is the next client-side correctness gap, because every added facet makes
-   the invisible 40-row cap more misleading.
+   count. A6's pagination is deployed and proved against hosted data, so the invisible 40-row cap
+   every added facet made more misleading is gone; what is left of it is three checks that need a
+   running app, not more SQL.
 7. **Explore, partially** — B3 new, B4 shell. Featured and popular wait.
 8. **Epic H** — H1/H2 dark mode can start any time and is needed by everything else in the
    epic; the shoot (H3–H7) must use the Expo Go-compatible asset path chosen after G5.
