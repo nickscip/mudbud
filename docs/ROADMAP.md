@@ -293,18 +293,26 @@ E4 is Python work on a pipeline that already runs.
   run, not part of this change.
 - **E5 · Orphan blob GC** — **done.** Ships `glaze-etl gc --manufacturer <key>`: reports
   by default (referenced/bucket counts, orphaned sha/object counts, anything held back
-  or unparseable), and only deletes with `--prune`. Three structural refusals exist
-  because deletion is irreversible and a
+  or unparseable), and only deletes with `--prune`. Destructive runs require a configured
+  Supabase Storage secret and verify the concrete target is `SupabaseBlobStore`, so a missing
+  credential cannot silently redirect deletion into the local byte cache. Structural refusals
+  exist because deletion is irreversible and a
   local-database/hosted-bucket mismatch is a documented failure mode here
   (`AGENTS.md`'s Mayco-sync anecdote): a hard refusal unless the database connection and
-  Storage URL identify the same Supabase project, a hard refusal when the computed reference
-  set is empty against a non-empty bucket, and a refusal (overridable with `--force`) when
-  the orphan fraction exceeds 10% of a bucket of at least 40 objects.
+  Storage URL identify the same Supabase project (including a real pooler-host check), an
+  explicit `--allow-local-prune` acknowledgement because loopback port pairs have no shared
+  project identity, a hard refusal when the computed reference set is empty against a non-empty
+  bucket, and a refusal (overridable with `--force`) when the orphan fraction exceeds 10% of a
+  bucket of at least 40 objects. Failure to read `storage.objects` aborts instead of being
+  presented as a clean empty-bucket dry run.
   Two further timing safeguards close the gap between an upload and the database row
   that cites it: a per-object minimum age (`--min-age-minutes`, default 60) excludes any
   sha-group with a too-recent or unknown-age object from deletion for that run, and the
   orphan set is recomputed against the database immediately before deleting, dropping
-  anything referenced since the report was printed. Ships the sweep and its tests only —
+  anything referenced since the report was printed. A transaction-level advisory lock held
+  on a dedicated connection also excludes `load`, `sync`, and another prune for the same
+  manufacturer; keeping its transaction open makes that lock valid through Supabase's
+  transaction-mode pooler. Ships the sweep and its tests only —
   it has not been run against the hosted database or bucket, which remains a deliberate
   follow-up for the owner, exactly as E6's entry deferred the SW-511 reparse. The required
   credentialed Storage checks include never-uploaded and already-removed keys so a benign

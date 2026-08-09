@@ -18,7 +18,11 @@ from collections.abc import Iterator
 import psycopg
 import pytest
 
-from glaze_etl.core.db import referenced_shas
+from glaze_etl.core.db import (
+    BlobOperationAlreadyRunning,
+    exclusive_blob_operation,
+    referenced_shas,
+)
 
 DSN = os.environ.get("TEST_SUPABASE_DB_URL")
 pytestmark = pytest.mark.skipif(not DSN, reason="TEST_SUPABASE_DB_URL not set")
@@ -114,3 +118,17 @@ def test_two_rows_sharing_one_sha_under_the_same_manufacturer_yield_one_entry(
     # collapse to one entry — trivially true of a set, but this is the case the SQL's
     # own `distinct` exists to guarantee at the query level, not just in Python.
     assert shared_sha in result
+
+
+def test_blob_operation_lock_excludes_a_second_process() -> None:
+    assert DSN
+    with (
+        exclusive_blob_operation(DSN, "amaco"),
+        pytest.raises(BlobOperationAlreadyRunning),
+        exclusive_blob_operation(DSN, "amaco"),
+    ):
+        pytest.fail("the same manufacturer lock was acquired twice")
+
+    # Releasing the first transaction must make the lock available again.
+    with exclusive_blob_operation(DSN, "amaco"):
+        pass

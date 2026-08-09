@@ -10,6 +10,10 @@ seconds-scale window between a blob's upload and the database row that cites it
 committing (`media.py` uploads before `pipeline.py`'s `upsert_image` commits), and
 `recheck_orphans` closes the open-ended window between a human reading a report and
 choosing to pass `--prune`.
+
+The CLI additionally holds a database transaction-level advisory lock shared with `load`
+and `sync`; the pure recheck here is defense in depth rather than an attempted substitute
+for excluding concurrent reference writers.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ _SHARD_RE = re.compile(r"[0-9a-f]{2}")
 _FILENAME_RE = re.compile(r"([0-9a-f]{64})\.jpg")
 _STORAGE_PROJECT_RE = re.compile(r"^([a-z0-9]+)\.supabase\.co$")
 _DIRECT_DB_PROJECT_RE = re.compile(r"^db\.([a-z0-9]+)\.supabase\.co$")
+_POOLER_DB_HOST_RE = re.compile(r"^[a-z0-9-]+\.pooler\.supabase\.com$")
 _POOLED_DB_USER_RE = re.compile(r"^postgres\.([a-z0-9]+)$")
 _LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
@@ -33,14 +38,17 @@ def database_matches_storage_project(
     database_host: str | None,
     database_user: str | None,
     storage_url: str,
+    *,
+    allow_local: bool = False,
 ) -> bool:
     """Whether the DB connection and Storage URL identify the same Supabase project.
 
     Hosted direct connections encode the project ref in
     `db.<ref>.supabase.co`; transaction-pooler connections encode it in the
-    `postgres.<ref>` username. Local Supabase is recognized only when both endpoints are
-    loopback. Anything custom or unrecognized fails closed because this gates irreversible
-    deletion, not ordinary reads or uploads.
+    `postgres.<ref>` username, but only on a recognized Supabase pooler host. Local Supabase
+    ports do not carry a shared project identity, so loopback endpoints match only after the
+    caller records an explicit local-prune acknowledgement. Anything custom or unrecognized
+    fails closed because this gates irreversible deletion, not ordinary reads or uploads.
     """
     storage_host = urlparse(storage_url).hostname
     if storage_host is None:
@@ -48,7 +56,7 @@ def database_matches_storage_project(
     normalized_storage_host = storage_host.lower()
     normalized_database_host = (database_host or "").lower()
     if normalized_storage_host in _LOCAL_HOSTS:
-        return normalized_database_host in _LOCAL_HOSTS
+        return allow_local and normalized_database_host in _LOCAL_HOSTS
 
     storage_match = _STORAGE_PROJECT_RE.fullmatch(normalized_storage_host)
     if storage_match is None:
@@ -58,7 +66,9 @@ def database_matches_storage_project(
     direct_match = _DIRECT_DB_PROJECT_RE.fullmatch(normalized_database_host)
     if direct_match is not None and direct_match.group(1) == storage_project:
         return True
-    user_match = _POOLED_DB_USER_RE.fullmatch(database_user or "")
+    if _POOLER_DB_HOST_RE.fullmatch(normalized_database_host) is None:
+        return False
+    user_match = _POOLED_DB_USER_RE.fullmatch((database_user or "").lower())
     return user_match is not None and user_match.group(1) == storage_project
 
 

@@ -33,9 +33,15 @@ class TestDatabaseMatchesStorageProject:
             "https://abcdefghijklmnopqrst.supabase.co",
         )
 
-    def test_local_endpoints_match(self) -> None:
-        assert database_matches_storage_project(
+    def test_local_endpoints_require_an_explicit_acknowledgement(self) -> None:
+        assert not database_matches_storage_project(
             "127.0.0.1", "postgres", "http://127.0.0.1:54321"
+        )
+        assert database_matches_storage_project(
+            "127.0.0.1",
+            "postgres",
+            "http://127.0.0.1:54321",
+            allow_local=True,
         )
 
     def test_local_database_never_matches_hosted_storage(self) -> None:
@@ -50,6 +56,13 @@ class TestDatabaseMatchesStorageProject:
             "aws-0-us-east-1.pooler.supabase.com",
             "postgres.aaaaaaaaaaaaaaaaaaaa",
             "https://bbbbbbbbbbbbbbbbbbbb.supabase.co",
+        )
+
+    def test_pooler_username_on_an_arbitrary_host_fails_closed(self) -> None:
+        assert not database_matches_storage_project(
+            "database.example.test",
+            "postgres.abcdefghijklmnopqrst",
+            "https://abcdefghijklmnopqrst.supabase.co",
         )
 
     def test_unknown_custom_storage_domain_fails_closed(self) -> None:

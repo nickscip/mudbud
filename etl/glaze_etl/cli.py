@@ -9,6 +9,8 @@ rather than a second implementation that can drift.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -25,11 +27,20 @@ from glaze_etl.core.blob_gc import (
     recheck_orphans,
     reference_set_looks_wrong,
 )
-from glaze_etl.core.blob_store import blob_store_for
+from glaze_etl.core.blob_store import SupabaseBlobStore, blob_store_for
 from glaze_etl.core.color_namer import load_color_namer
 from glaze_etl.core.config import Settings
+from glaze_etl.core.db import (
+    BlobOperationAlreadyRunning,
+    exclusive_blob_operation,
+    referenced_shas,
+    stored_object_ages,
+    stored_object_keys,
+)
 from glaze_etl.core.db import connect as db_connect
-from glaze_etl.core.db import referenced_shas, stored_object_ages, stored_object_keys
+from glaze_etl.core.db import (
+    connection as db_connection,
+)
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome
 from glaze_etl.core.loader import Loader
 from glaze_etl.core.media import MediaProcessor
@@ -55,6 +66,20 @@ structlog.configure(
 log = structlog.get_logger("glaze_etl")
 
 ManufacturerOption = Annotated[str, typer.Option(help="Source key, e.g. amaco.")]
+
+
+@contextmanager
+def _exclusive_blob_operation(database_url: str, manufacturer: str) -> Iterator[None]:
+    """Turn a failed non-blocking lock acquisition into a concise CLI refusal."""
+    try:
+        with exclusive_blob_operation(database_url, manufacturer):
+            yield
+    except BlobOperationAlreadyRunning:
+        typer.secho(
+            f"refusing: another sync, load, or gc prune is active for {manufacturer}",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1) from None
 
 
 @app.command()
@@ -228,7 +253,10 @@ def load(
     adapter = adapter_for(manufacturer)
 
     async def run() -> None:
-        with db_connect(settings.database_url) as conn:
+        with (
+            _exclusive_blob_operation(settings.database_url, manufacturer),
+            db_connect(settings.database_url) as conn,
+        ):
             normalizer = normalizer_for(conn, adapter)
             loader = Loader(conn, normalizer)
             namer = load_color_namer(conn)
@@ -313,7 +341,10 @@ def sync(
         stored = unchanged = ingested = 0
         failed: list[str] = []
 
-        with db_connect(settings.database_url) as conn:
+        with (
+            _exclusive_blob_operation(settings.database_url, manufacturer),
+            db_connect(settings.database_url) as conn,
+        ):
             loader = Loader(conn, normalizer_for(conn, adapter))
             namer = load_color_namer(conn)
             already = stored_object_keys(conn, settings.bucket_for(adapter.manufacturer.value))
@@ -381,6 +412,15 @@ def gc(
     force: Annotated[
         bool, typer.Option(help="Override the high-orphan-fraction refusal.")
     ] = False,
+    allow_local_prune: Annotated[
+        bool,
+        typer.Option(
+            help=(
+                "Acknowledge that loopback DB and Storage ports cannot prove they belong "
+                "to the same local Supabase stack."
+            )
+        ),
+    ] = False,
     min_age_minutes: Annotated[
         int,
         typer.Option(
@@ -391,25 +431,48 @@ def gc(
     """Report — and, with `--prune`, delete — bucket objects no `glaze_images` row cites.
 
     Report-only by default, so a bare `glaze-etl gc` is always safe to run. Deletion is
-    irreversible, so this refuses outright (no override) when the database and Storage
-    endpoint do not identify the same Supabase project or when the computed reference set
-    is empty against a non-empty bucket. It also refuses unless `--force` when the orphan
+    irreversible, so this requires a hosted Storage credential, excludes concurrent loads
+    and syncs, and refuses outright (no override) when the database and Storage endpoint do
+    not identify the same Supabase project or when the computed reference set is empty
+    against a non-empty bucket. Local stacks need `--allow-local-prune` because their ports
+    carry no common project identity. It also refuses unless `--force` when the orphan
     fraction looks implausibly high.
     """
     settings = Settings()
+    if prune and not (settings.supabase_url and settings.secret_key):
+        typer.secho(
+            "refusing: --prune requires SUPABASE_URL and SUPABASE_SECRET_KEY so deletion "
+            "cannot silently target the local blob cache",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+
     bucket = settings.bucket_for(manufacturer)
-    conn = db_connect(settings.database_url, autocommit=True)
-    try:
+    operation = (
+        _exclusive_blob_operation(settings.database_url, manufacturer)
+        if prune
+        else nullcontext()
+    )
+    with operation, db_connection(settings.database_url, autocommit=True) as conn:
         info = conn.info
         typer.echo(f"database {info.host}/{info.dbname}  bucket {bucket}")
 
         referenced = referenced_shas(conn, manufacturer)
-        ages = stored_object_ages(conn, bucket)
+        try:
+            ages = stored_object_ages(conn, bucket)
+        except psycopg.Error:
+            typer.secho(
+                "refusing: could not read Storage object metadata; gc cannot distinguish "
+                "an empty bucket from a database or permission failure",
+                fg=typer.colors.RED,
+            )
+            raise typer.Exit(code=1) from None
 
         if prune and not database_matches_storage_project(
             info.host,
             info.user,
             settings.supabase_url,
+            allow_local=allow_local_prune,
         ):
             typer.secho(
                 "refusing: the database connection and SUPABASE_URL do not identify "
@@ -462,17 +525,22 @@ def gc(
             )
             raise typer.Exit(code=1)
 
-        # Recomputed immediately before deleting, so nothing referenced since the report
-        # above was printed gets swept — the age gate bounds upload-to-commit, not how
-        # long a human sits on this report before choosing --prune.
+        # Recomputed immediately before deleting as defense in depth. The shared advisory
+        # lock excludes load/sync for the whole prune; the age gate still protects objects
+        # uploaded by older code that did not participate in that lock.
         newly_referenced = referenced_shas(conn, manufacturer)
         to_delete = recheck_orphans(sweep.orphaned_keys, newly_referenced)
 
         blobs = blob_store_for(settings, manufacturer)
-        blobs.remove(sorted(to_delete))
+        if not isinstance(blobs, SupabaseBlobStore):
+            typer.secho(
+                "refusing: --prune selected a non-Supabase blob store",
+                fg=typer.colors.RED,
+            )
+            raise typer.Exit(code=1)
+        with blobs:
+            blobs.remove(sorted(to_delete))
         typer.secho(f"deleted {len(to_delete)} object(s)", bold=True)
-    finally:
-        conn.close()
 
 
 @app.command()
