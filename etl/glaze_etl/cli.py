@@ -44,7 +44,7 @@ from glaze_etl.core.db import (
     connection as db_connection,
 )
 from glaze_etl.core.fetcher import Fetcher, FetchOutcome
-from glaze_etl.core.loader import Loader
+from glaze_etl.core.loader import Loader, listing_is_complete
 from glaze_etl.core.media import MediaProcessor
 from glaze_etl.core.models import ProductRef, RawSnapshot
 from glaze_etl.core.pipeline import ingest_product, normalizer_for
@@ -370,6 +370,8 @@ def sync(
         log.info("sync.start", products=len(refs), delay_s=adapter.politeness.crawl_delay_s)
         stored = unchanged = ingested = 0
         failed: list[str] = []
+        gone: list[str] = []
+        unavailable: list[str] = []
 
         with (
             _exclusive_blob_operation(
@@ -409,6 +411,9 @@ def sync(
                     operation_lock.check()
                     result = await fetcher.fetch(ref)
                     operation_lock.check()
+                    if result.outcome is FetchOutcome.GONE:
+                        gone.append(ref.external_id)
+                        continue
                     if result.outcome is not FetchOutcome.STORED or result.snapshot is None:
                         unchanged += 1
                         continue
@@ -423,18 +428,35 @@ def sync(
                     operation_lock.check()
                     conn.commit()
 
+            # Only a whole-catalog pass can say what is *absent*. A `--limit` or slug run
+            # saw a subset by construction, and a discovery that came back short is a broken
+            # sitemap, not a mass withdrawal.
+            if not slug and not limit:
+                known = loader.glaze_count(adapter.manufacturer.value)
+                if listing_is_complete(len(refs), known):
+                    listed = [ref.external_id for ref in refs if ref.external_id not in gone]
+                    seen, unavailable = loader.reconcile_listing(adapter.manufacturer.value, listed)
+                    log.info("sync.listing", seen=seen, unavailable=len(unavailable))
+                else:
+                    log.warning("sync.listing_skipped", discovered=len(refs), known=known)
+
             cones = loader.inherit_line_cones()
             links = loader.link_layering()
             operation_lock.check()
             conn.commit()
 
         typer.secho(
-            f"\nchanged {stored}  unchanged {unchanged}  ingested {ingested}  "
-            f"cone-inherited {cones}  layering {links}  failed {len(failed)}",
+            f"\nchanged {stored}  unchanged {unchanged}  ingested {ingested}  gone {len(gone)}  "
+            f"cone-inherited {cones}  layering {links}  failed {len(failed)}  "
+            f"unavailable {len(unavailable)}",
             bold=True,
         )
         if failed:
             typer.secho("  failed: " + ", ".join(failed[:10]), fg=typer.colors.YELLOW)
+        if unavailable:
+            typer.secho(
+                "  newly unavailable: " + ", ".join(unavailable[:10]), fg=typer.colors.YELLOW
+            )
 
     asyncio.run(run())
 

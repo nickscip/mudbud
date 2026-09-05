@@ -46,6 +46,15 @@ VOLATILE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"window\.__CF\$cv\$params\s*=\s*\{[^}]*\}"),
     # The analytics event block repeats the timestamp and a per-visit id.
     re.compile(r"\"(?:timestamp|visit_id|session_id|event_id)\"\s*:\s*\"[^\"]*\""),
+    # Second pass, 2026-09-05. Three more sources of per-request noise, each of which on
+    # its own made every weekly sync report `changed 352 unchanged 0` for a month:
+    # BigCommerce's anti-bot beacon — a whole <script> that is present on some responses
+    # and absent on others, so stripping its fields (above) was not enough;
+    re.compile(r"\s*<script[^>]*>\s*\(function \(\) \{[^<]*?/nobot[^<]*?\}\)\(\);\s*</script>"),
+    # the JSON-LD offer's validity date, which is always the fetch date plus one year;
+    re.compile(r"\"priceValidUntil\"\s*:\s*\"[^\"]*\""),
+    # and a storefront JWT minted per request.
+    re.compile(r"window\.storefront_token\s*=\s*\"[^\"]*\""),
 )
 
 _GLAZE_SLUG_RE = re.compile(

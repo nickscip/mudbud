@@ -311,6 +311,75 @@ class TestCanonicalHashing:
         assert len(store.rows) == 1
 
 
+class TestCanonicalHashingSecondPass:
+    """BigCommerce grew three more kinds of noise after the PCF-54 pair was captured, and
+    the three scheduled syncs of August 2026 each reported `changed 352 unchanged 0`.
+
+    Measured against the hosted 2026-08-24 snapshot of CO-7 and a fetch on 2026-09-05,
+    canonicalised with the first-pass patterns, the residue was:
+
+    - a `/nobot` anti-bot `<script>` that is present on some responses and absent on
+      others (the first pass stripped its `timestamp`/`visit_id` fields, not the block);
+    - `"priceValidUntil": "<fetch date + 1 year>"` in the JSON-LD offer — rolls daily;
+    - `window.storefront_token = "<JWT>"` — minted per request, differs day to day.
+
+    Any one of them alone makes every page look changed every week, which re-downloads
+    ~1300 images from a CDN that does not return byte-identical files (see `gc`).
+    The fixture pair here is two live fetches of CO-7 ten seconds apart on 2026-09-05:
+    fetch-a carries the nobot block, fetch-b does not.
+    """
+
+    @staticmethod
+    def _bodies() -> tuple[str, str]:
+        from tests.conftest import fixture_dir
+
+        return (
+            (fixture_dir("amaco") / "volatile-co-07-fetch-a.html").read_text(),
+            (fixture_dir("amaco") / "volatile-co-07-fetch-b.html").read_text(),
+        )
+
+    def test_the_nobot_block_comes_and_goes(self) -> None:
+        a, b = self._bodies()
+        assert "/nobot" in a
+        assert "/nobot" not in b
+
+    def test_canonical_hash_is_stable_across_the_nobot_flip(self) -> None:
+        a, b = self._bodies()
+        assert content_hash(a, VOLATILE_PATTERNS) == content_hash(b, VOLATILE_PATTERNS)
+
+    def test_canonical_hash_survives_the_daily_price_validity_rollover(self) -> None:
+        a, _ = self._bodies()
+        assert '"priceValidUntil": "2027-09-05"' in a
+        tomorrow = a.replace('"priceValidUntil": "2027-09-05"', '"priceValidUntil": "2027-09-06"')
+        assert content_hash(a, VOLATILE_PATTERNS) == content_hash(tomorrow, VOLATILE_PATTERNS)
+
+    def test_canonical_hash_survives_a_fresh_storefront_token(self) -> None:
+        import re
+
+        a, _ = self._bodies()
+        match = re.search(r'window\.storefront_token = "([^"]+)"', a)
+        assert match is not None
+        reminted = a.replace(match.group(1), "eyJ.another.token")
+        assert content_hash(a, VOLATILE_PATTERNS) == content_hash(reminted, VOLATILE_PATTERNS)
+
+    def test_canonicalisation_leaves_product_data_alone(self) -> None:
+        from glaze_etl.core.fetcher import canonicalize_for_hash
+
+        a, _ = self._bodies()
+        canonical = canonicalize_for_hash(a, VOLATILE_PATTERNS)
+        assert "Solar Flare" in canonical
+        assert "CO-7_SolarFlare_6x6_SquareTile_WEB" in canonical
+        assert '"availability" : "https://schema.org/InStock"' in canonical
+        assert "/nobot" not in canonical
+        assert "priceValidUntil" not in canonical
+        assert "storefront_token" not in canonical
+
+    def test_a_real_content_change_still_registers(self) -> None:
+        a, _ = self._bodies()
+        sold_out = a.replace("schema.org/InStock", "schema.org/OutOfStock")
+        assert content_hash(a, VOLATILE_PATTERNS) != content_hash(sold_out, VOLATILE_PATTERNS)
+
+
 class TestMaycoIsQuiet:
     """The other outcome of the same measurement, which is why it is asserted rather than
     assumed.
