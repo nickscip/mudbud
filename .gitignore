@@ -61,3 +61,6 @@ etl/.blobs/
 
 # Worktrees created by EnterWorktree live inside the checkout; never commit their contents.
 .claude/worktrees/
+
+# pytest-cov data file
+etl/.coverage
