@@ -139,6 +139,13 @@ class Loader:
             on conflict (manufacturer_id, code) do update set
               line_id = excluded.line_id,
               name = excluded.name,
+              -- A manufacturer can rename a product's URL slug while keeping its code —
+              -- Mayco's Store API SKU is the stable identity, the slug is not. Without
+              -- this, the stored slug goes stale, `reconcile_listing` no longer sees the
+              -- product it just re-ingested in the fresh listing, and marks it Unavailable
+              -- on the same run that successfully updated it.
+              slug = excluded.slug,
+              product_url = excluded.product_url,
               description = excluded.description,
               surface_id = excluded.surface_id,
               opacity_id = excluded.opacity_id,
@@ -200,6 +207,24 @@ class Loader:
         count = row[0] if row else 0
         assert isinstance(count, int)
         return count
+
+    def unavailable_slugs(self, manufacturer: str) -> set[str]:
+        """Slugs currently marked `UNAVAILABLE` for one manufacturer.
+
+        `sync` uses this to force a re-ingest when such a glaze's page fetches
+        `UNCHANGED` — the "only touch what changed" fast path never runs for it
+        otherwise, so a row marked unavailable while briefly missing from a listing
+        would stay marked forever once its page stopped producing fresh bytes,
+        even though it is listed again.
+        """
+        rows = self._conn.execute(
+            """
+            select g.slug from glazes g join manufacturers m on m.id = g.manufacturer_id
+            where m.key = %s and g.availability = %s
+            """,
+            (manufacturer, UNAVAILABLE),
+        ).fetchall()
+        return {str(r[0]) for r in rows}
 
     def reconcile_listing(
         self, manufacturer: str, listed_slugs: Iterable[str]

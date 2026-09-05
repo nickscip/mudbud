@@ -368,7 +368,7 @@ def sync(
                     break
 
         log.info("sync.start", products=len(refs), delay_s=adapter.politeness.crawl_delay_s)
-        stored = unchanged = ingested = 0
+        stored = unchanged = ingested = recovered = 0
         failed: list[str] = []
         gone: list[str] = []
         unavailable: list[str] = []
@@ -397,15 +397,22 @@ def sync(
                 media = (
                     MediaProcessor(client, blobs, byte_cache=Path(blob_dir)) if images else None
                 )
+                snapshot_store = PostgresSnapshotStore(conn)
                 fetcher = Fetcher(
                     client,
-                    PostgresSnapshotStore(conn),
+                    snapshot_store,
                     adapter.manufacturer,
                     adapter.politeness,
                     volatile_patterns=adapter.volatile_patterns,
                     retention=settings.snapshot_retention,
                     max_attempts=settings.max_attempts,
                 )
+                # A row marked Unavailable only recovers through the normal ingest path,
+                # which needs a STORED fetch. If the page's bytes settled back to whatever
+                # we last captured before it went (or was reported) missing, the fetch comes
+                # back UNCHANGED and ingest never runs — so check this set explicitly and
+                # force a re-ingest from the snapshot already on hand.
+                unavailable_before = loader.unavailable_slugs(adapter.manufacturer.value)
 
                 for ref in refs:
                     operation_lock.check()
@@ -416,6 +423,22 @@ def sync(
                         continue
                     if result.outcome is not FetchOutcome.STORED or result.snapshot is None:
                         unchanged += 1
+                        if result.outcome is FetchOutcome.UNCHANGED and (
+                            ref.external_id in unavailable_before
+                        ):
+                            snapshot = snapshot_store.newest(str(ref.url), adapter.manufacturer)
+                            if snapshot is not None:
+                                try:
+                                    await ingest_product(snapshot, adapter, loader, media, namer)
+                                    recovered += 1
+                                except Exception as exc:
+                                    log.warning(
+                                        "sync.recover_failed",
+                                        slug=ref.external_id,
+                                        error=str(exc),
+                                    )
+                                operation_lock.check()
+                                conn.commit()
                         continue
                     stored += 1
                     try:
@@ -447,8 +470,8 @@ def sync(
 
         typer.secho(
             f"\nchanged {stored}  unchanged {unchanged}  ingested {ingested}  gone {len(gone)}  "
-            f"cone-inherited {cones}  layering {links}  failed {len(failed)}  "
-            f"unavailable {len(unavailable)}",
+            f"recovered {recovered}  cone-inherited {cones}  layering {links}  "
+            f"failed {len(failed)}  unavailable {len(unavailable)}",
             bold=True,
         )
         if failed:

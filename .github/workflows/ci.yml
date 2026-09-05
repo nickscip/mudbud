@@ -19,10 +19,72 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Changes — is there anything here CI can check?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Needs a merge base to diff against, which a shallow clone does not have.
+          fetch-depth: 0
+
+      - name: Classify the diff
+        id: classify
+        # Every job below is gated on this, so a documentation-only change spins up no
+        # Postgres, installs no node_modules and bundles no app.
+        #
+        # Why a job-level `if:` and not `paths-ignore:` on the workflow. The four job names
+        # here are *required status checks* on main. A workflow that path-filters itself out
+        # never reports them at all, so they sit pending and the pull request can never be
+        # merged — the branch protection failure mode that looks exactly like a hung CI. A
+        # job skipped by `if:` still reports its name, with conclusion `skipped`, which
+        # counts as passing. So the checks must stay reachable and decide for themselves.
+        #
+        # It fails open on purpose: no base to compare against, or nothing changed at all,
+        # runs everything. Skipping CI wrongly is expensive to notice; running it wrongly
+        # costs a few minutes.
+        run: |
+          set -euo pipefail
+          if [ -n "${{ github.base_ref }}" ]; then
+            git fetch --quiet origin "${{ github.base_ref }}"
+            range="origin/${{ github.base_ref }}...HEAD"
+          elif git cat-file -e "${{ github.event.before }}^{commit}" 2>/dev/null; then
+            range="${{ github.event.before }}..HEAD"
+          else
+            echo "no base to compare against — running everything"
+            echo "code=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed="$(git diff --name-only "$range")"
+          if [ -z "$changed" ]; then
+            echo "no files in $range — running everything"
+            echo "code=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "changed in $range:"
+          echo "$changed" | sed 's/^/  /'
+
+          # Documentation is anything no job reads: `docs/`, any markdown, the licence.
+          # Note what is deliberately *not* on this list — `.github/` most of all, since a
+          # change to CI itself has to run CI.
+          if echo "$changed" | grep -qvE '(^docs/|\.md$|^LICENSE$)'; then
+            echo "code=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "documentation only — skipping the rest"
+            echo "code=false" >>"$GITHUB_OUTPUT"
+          fi
+
   guards:
     name: Guards — append-only migrations
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +128,8 @@ jobs:
     name: ETL — lint, types, tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     defaults:
       run:
         working-directory: etl
@@ -156,6 +220,8 @@ jobs:
     name: Schema — migrations and SQL contract
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
 
     services:
       postgres:
@@ -190,6 +256,8 @@ jobs:
     name: App — typecheck, tests, bundle
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
 
     steps:
       - uses: actions/checkout@v4
