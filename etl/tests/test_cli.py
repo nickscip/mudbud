@@ -398,7 +398,10 @@ def _wire_sync(
     adapter: object | None = None,
     glaze_count: int = 0,
     reconcile: tuple[int, list[str]] = (0, []),
+    unavailable_before: set[str] | None = None,
+    newest_snapshot: object | None = None,
 ) -> SimpleNamespace:
+    unavailable_before = set() if unavailable_before is None else unavailable_before
     monkeypatch.setattr(cli, "Settings", _settings)
     if adapter is not None:
         monkeypatch.setattr(cli, "adapter_for", lambda _k: adapter)
@@ -413,18 +416,25 @@ def _wire_sync(
     loader.link_layering.return_value = 0
     loader.glaze_count.return_value = glaze_count
     loader.reconcile_listing.return_value = reconcile
+    # Membership-tested against every ref, so it has to be a real set rather than a Mock.
+    # Empty by default: the recovery path has its own tests below.
+    loader.unavailable_slugs.return_value = unavailable_before
     monkeypatch.setattr(cli, "Loader", lambda *_a: loader)
     monkeypatch.setattr(cli, "normalizer_for", Mock())
     monkeypatch.setattr(cli, "load_color_namer", Mock())
     monkeypatch.setattr(cli, "stored_object_keys", lambda *_a: set())
     monkeypatch.setattr(cli, "blob_store_for", Mock())
     monkeypatch.setattr(cli, "MediaProcessor", Mock())
-    monkeypatch.setattr(cli, "PostgresSnapshotStore", lambda _conn: InMemorySnapshotStore())
+    # The recovery path reads a stored snapshot back, which is a PostgresSnapshotStore method the
+    # in-memory double does not carry, so it is attached here rather than widening the Protocol.
+    store = InMemorySnapshotStore()
+    store.newest = Mock(return_value=newest_snapshot)  # type: ignore[attr-defined]
+    monkeypatch.setattr(cli, "PostgresSnapshotStore", lambda _conn: store)
     ingest = AsyncMock()
     monkeypatch.setattr(cli, "ingest_product", ingest)
     _use_transport(monkeypatch, transport)
 
-    return SimpleNamespace(lock=lock, conn=conn, loader=loader, ingest=ingest)
+    return SimpleNamespace(lock=lock, conn=conn, loader=loader, ingest=ingest, store=store)
 
 
 def test_sync_of_one_slug_fetches_and_ingests_it(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -466,6 +476,78 @@ def test_sync_counts_a_304_as_unchanged(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert result.exit_code == 0, result.output
     assert "changed 0  unchanged 1  ingested 0" in result.output
+    env.ingest.assert_not_awaited()
+
+
+def test_sync_reingests_an_unavailable_product_whose_page_came_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A product marked Unavailable recovers only through ingest, and ingest only runs on a
+    STORED fetch. If the page returns with the bytes we already hold, the fetch is UNCHANGED
+    and nothing would ever clear the marker — so the stored snapshot is replayed explicitly."""
+    snapshot = snapshot_for("pc-20-blue-rutile")
+    transport, _ = _responder(httpx.Response(304))
+    env = _wire_sync(
+        monkeypatch,
+        transport,
+        unavailable_before={"pc-20-blue-rutile"},
+        newest_snapshot=snapshot,
+    )
+
+    result = _run("sync", "pc-20-blue-rutile", "--no-images")
+
+    assert result.exit_code == 0, result.output
+    env.ingest.assert_awaited_once()
+    assert env.ingest.await_args.args[0] is snapshot
+    env.conn.commit.assert_called()
+
+
+def test_sync_leaves_an_unchanged_product_alone_when_it_is_not_marked_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The counterpart: the recovery replay must not fire for every unchanged product, or a
+    steady-state weekly run would re-ingest the whole catalog it was built to skip."""
+    transport, _ = _responder(httpx.Response(304))
+    env = _wire_sync(monkeypatch, transport, newest_snapshot=snapshot_for("pc-20-blue-rutile"))
+
+    result = _run("sync", "pc-20-blue-rutile", "--no-images")
+
+    assert result.exit_code == 0, result.output
+    env.ingest.assert_not_awaited()
+    env.store.newest.assert_not_called()
+
+
+def test_sync_reports_a_failed_recovery_without_stopping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport, _ = _responder(httpx.Response(304))
+    env = _wire_sync(
+        monkeypatch,
+        transport,
+        unavailable_before={"pc-20-blue-rutile"},
+        newest_snapshot=snapshot_for("pc-20-blue-rutile"),
+    )
+    env.ingest.side_effect = RuntimeError("boom")
+
+    result = _run("sync", "pc-20-blue-rutile", "--no-images")
+
+    assert result.exit_code == 0, result.output
+
+
+def test_sync_skips_recovery_when_no_snapshot_was_ever_stored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport, _ = _responder(httpx.Response(304))
+    env = _wire_sync(
+        monkeypatch,
+        transport,
+        unavailable_before={"pc-20-blue-rutile"},
+        newest_snapshot=None,
+    )
+
+    result = _run("sync", "pc-20-blue-rutile", "--no-images")
+
+    assert result.exit_code == 0, result.output
     env.ingest.assert_not_awaited()
 
 
