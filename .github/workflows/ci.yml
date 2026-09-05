@@ -146,7 +146,11 @@ jobs:
         env:
           TEST_SUPABASE_DB_URL: postgres://postgres:postgres@localhost:5432/postgres
           TEST_PGBOUNCER_DB_URL: postgres://postgres:postgres@127.0.0.1:6433/postgres
-        run: uv run pytest -q
+        # --cov-fail-under lives here rather than in pyproject: a local run without the DSN above
+        # skips the Postgres-backed tests, so a threshold in the config would fail a green
+        # developer suite. Branch coverage is on (see [tool.coverage.run]), which is what stops a
+        # happy path from reading as though it had exercised every refusal it walked past.
+        run: uv run pytest -q --cov=glaze_etl --cov-report=term-missing --cov-fail-under=90
 
   schema:
     name: Schema — migrations and SQL contract
@@ -183,7 +187,7 @@ jobs:
         run: scripts/verify-schema.sh
 
   app:
-    name: App — typecheck, device DB, bundle
+    name: App — typecheck, tests, bundle
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -192,28 +196,24 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # 22 for `node:sqlite` and type stripping, both of which the device-database test uses.
-          node-version: 22
+          # One source for the version, shared with anyone running nvm locally. The floor is
+          # 22.13: the expo-sqlite double runs on `node:sqlite`, unflagged there.
+          node-version-file: .nvmrc
           cache: npm
 
       - run: npm ci
 
       - name: Typecheck
+        # Covers the test tree and __mocks__ too, so a mock that drifts from the module it
+        # stands in for fails here rather than passing a test against a fiction.
         run: npx tsc --noEmit
 
-      - name: Glaze filters
-        # Pure state and the hand-written RPC argument names, without a device or network.
-        run: npm run test:glaze-filters
-
-      - name: Glaze pagination
-        # Pure cursor and merge logic: no React test dependency or live Supabase project.
-        run: npm run test:glaze-pagination
-
-      - name: Device database
-        # The local schema has an upgrade path that only runs on a phone which installed the app
-        # before the change, so it is the least reachable and most destructive code in src/db.
-        # ddl.ts keeps those statements free of expo-sqlite so node:sqlite can run the real thing.
-        run: node --experimental-strip-types scripts/test-device-db.mjs
+      - name: Tests
+        # Jest over src/, gated at 90% of statements, lines, functions and branches. The device
+        # database's upgrade path — the least reachable and most destructive code in src/db,
+        # since it only runs on a phone that installed the app before the change — is in here,
+        # running its real statements against an in-memory node:sqlite.
+        run: npm test -- --ci --coverage
 
       - name: Bundle
         # Proves the app actually builds, which a typecheck alone does not — it is where a

@@ -12,7 +12,7 @@ being re-run here.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -196,6 +196,26 @@ def test_crawl_discovers_and_skips_what_is_gone(monkeypatch: pytest.MonkeyPatch)
     assert "badges" not in result.output, "a 404 is skipped, not reported"
 
 
+def test_crawl_discovers_the_whole_short_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Under the limit, discovery runs to exhaustion. `lg-65-amber` also carries the one
+    fixture image whose filename names no subject glaze."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if "gone" in request.url.path:
+            return httpx.Response(404)
+        return httpx.Response(200, text=fixture_path("product-lg-65-amber").read_text())
+
+    monkeypatch.setattr(cli, "Settings", _settings)
+    monkeypatch.setattr(cli, "adapter_for", lambda _k: FakeAdapter(["lg-65-amber", "pc-2-gone"]))
+    _use_transport(monkeypatch, httpx.MockTransport(handle))
+
+    result = _run("crawl", "--dry-run")
+
+    assert result.exit_code == 0, result.output
+    assert "LG-65" in result.output
+    assert "[low   ] line_chart\n" in result.output, "an image whose filename names no glaze"
+
+
 def test_crawl_writes_through_postgres_and_closes_the_connection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -257,7 +277,7 @@ def _wire_load(
 ) -> SimpleNamespace:
     monkeypatch.setattr(cli, "Settings", _settings)
     lock = Mock()
-    monkeypatch.setattr(cli, "_exclusive_blob_operation", lambda *_a, **_k: nullcontext(lock))
+    monkeypatch.setattr(cli, "exclusive_blob_operation", lambda *_a, **_k: nullcontext(lock))
     conn = Mock()
     monkeypatch.setattr(cli, "db_connect", lambda *_a, **_k: nullcontext(conn))
 
@@ -301,7 +321,7 @@ def test_load_ingests_stored_snapshots_and_prints_the_stats(
     snapshot = snapshot_for("pc-20-blue-rutile")
     env = _wire_load(monkeypatch, snapshots=[snapshot], known={"m/aa/known.jpg"})
 
-    result = _run("load", "--no-images")
+    result = _run("load", "pc-20-blue-rutile", "--no-images")
 
     assert result.exit_code == 0, result.output
     assert (
@@ -383,7 +403,7 @@ def _wire_sync(
     if adapter is not None:
         monkeypatch.setattr(cli, "adapter_for", lambda _k: adapter)
     lock = Mock()
-    monkeypatch.setattr(cli, "_exclusive_blob_operation", lambda *_a, **_k: nullcontext(lock))
+    monkeypatch.setattr(cli, "exclusive_blob_operation", lambda *_a, **_k: nullcontext(lock))
     conn = Mock()
     monkeypatch.setattr(cli, "db_connect", lambda *_a, **_k: nullcontext(conn))
 
@@ -418,7 +438,8 @@ def test_sync_of_one_slug_fetches_and_ingests_it(monkeypatch: pytest.MonkeyPatch
     assert len(seen) == 1
     env.ingest.assert_awaited_once()
     assert env.conn.commit.call_count == 2, "once per ingested product, once at the end"
-    env.loader.glaze_count.assert_not_called(), "a targeted run cannot speak to absences"
+    # A targeted run cannot speak to absences, so it never asks how many glazes exist.
+    env.loader.glaze_count.assert_not_called()
 
 
 def test_sync_records_a_failed_ingest_without_losing_the_snapshot(
@@ -461,7 +482,8 @@ def test_sync_limit_caps_discovery_and_suppresses_reconciliation(
     assert result.exit_code == 0, result.output
     assert len(seen) == 1
     assert "changed 1" in result.output
-    env.loader.glaze_count.assert_not_called(), "a --limit run saw a subset by construction"
+    # A --limit run saw a subset by construction.
+    env.loader.glaze_count.assert_not_called()
 
 
 def test_sync_reconciles_a_complete_listing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -568,7 +590,7 @@ def _wire_gc(
     conn.info.dbname = "postgres"
     monkeypatch.setattr(cli, "db_connection", lambda *_a, **_k: nullcontext(conn))
     lock = Mock()
-    monkeypatch.setattr(cli, "_exclusive_blob_operation", lambda *_a, **_k: nullcontext(lock))
+    monkeypatch.setattr(cli, "exclusive_blob_operation", lambda *_a, **_k: nullcontext(lock))
     monkeypatch.setattr(
         cli,
         "referenced_shas",
@@ -720,9 +742,7 @@ def test_gc_prune_deletes_only_orphans_that_survive_the_recheck(
 # ----------------------------------------------------------------------------- report
 
 
-def _wire_report(
-    monkeypatch: pytest.MonkeyPatch, issues: list[tuple[str, int]]
-) -> Iterator[None]:
+def _wire_report(monkeypatch: pytest.MonkeyPatch, issues: list[tuple[str, int]]) -> None:
     monkeypatch.setattr(cli, "Settings", _settings)
     cursor = Mock()
     cursor.fetchone.return_value = (352, 900, 700, 120, 130, 8, 41)
@@ -730,7 +750,6 @@ def _wire_report(
     conn = Mock()
     conn.execute.return_value = cursor
     monkeypatch.setattr(cli, "db_connect", lambda *_a, **_k: nullcontext(conn))
-    return iter(())
 
 
 def test_report_prints_a_markdown_table_and_the_review_queue(

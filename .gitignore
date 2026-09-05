@@ -64,3 +64,6 @@ etl/.blobs/
 
 # pytest-cov data file
 etl/.coverage
+
+# Jest coverage output
+coverage/
