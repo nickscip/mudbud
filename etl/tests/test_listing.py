@@ -15,6 +15,9 @@ import psycopg
 import pytest
 
 from glaze_etl.core.loader import UNAVAILABLE, Loader, listing_is_complete
+from glaze_etl.core.models import ManufacturerKey, ParsedProduct
+from glaze_etl.core.pipeline import normalizer_for
+from glaze_etl.sources.amaco.adapter import AmacoAdapter
 
 
 class TestListingIsComplete:
@@ -123,3 +126,79 @@ class TestReconcileListing:
 
         assert loader.glaze_count("amaco") == 1
         assert loader.glaze_count("mayco") == 1
+
+
+@pytest.mark.skipif(not DSN, reason="TEST_SUPABASE_DB_URL not set")
+class TestUnavailableSlugs:
+    def test_only_unavailable_rows_come_back(self, conn: Connection) -> None:
+        _seed(conn, "amaco", "T-1", UNAVAILABLE)
+        _seed(conn, "amaco", "T-2", "InStock")
+        loader = Loader(conn, normalizer=None)  # type: ignore[arg-type]
+
+        assert loader.unavailable_slugs("amaco") == {"t-1"}
+
+    def test_scoped_to_the_manufacturer_asked_about(self, conn: Connection) -> None:
+        _seed(conn, "amaco", "T-1", UNAVAILABLE)
+        _seed(conn, "mayco", "T-9", UNAVAILABLE)
+        loader = Loader(conn, normalizer=None)  # type: ignore[arg-type]
+
+        assert loader.unavailable_slugs("amaco") == {"t-1"}
+
+
+def _product(*, slug: str, url: str) -> ParsedProduct:
+    return ParsedProduct(
+        manufacturer=ManufacturerKey.AMACO,
+        external_id=slug,
+        product_url=url,
+        code="T-1",
+        name="Test Glaze",
+        availability="InStock",
+    )
+
+
+@pytest.mark.skipif(not DSN, reason="TEST_SUPABASE_DB_URL not set")
+class TestUpsertGlazeRename:
+    """A manufacturer can rename a product's slug while keeping its code — the only
+    identity `(manufacturer_id, code)` promises to preserve (F7). Mayco's Store API keys
+    on `sku`, not the URL slug.
+
+    Without updating `slug`/`product_url` on conflict, the row keeps whichever slug it
+    was first inserted with. The next `reconcile_listing` call then sees the *old* slug,
+    finds it absent from a listing built from the *new* one, and marks a product that was
+    just successfully re-ingested `Unavailable` on the same run.
+    """
+
+    def test_a_renamed_slug_is_stored(self, conn: Connection) -> None:
+        normalizer = normalizer_for(conn, AmacoAdapter())
+        loader = Loader(conn, normalizer)
+
+        loader.upsert_glaze(
+            _product(slug="t-1-old-name", url="https://shop.amaco.com/t-1-old-name/"),
+            line_id=None,
+        )
+        loader.upsert_glaze(
+            _product(slug="t-1-new-name", url="https://shop.amaco.com/t-1-new-name/"),
+            line_id=None,
+        )
+
+        row = conn.execute(
+            "select slug, product_url from glazes g join manufacturers m "
+            "on m.id = g.manufacturer_id where m.key = 'amaco' and g.code = 'T-1'"
+        ).fetchone()
+        assert row == ("t-1-new-name", "https://shop.amaco.com/t-1-new-name/")
+
+    def test_reconcile_recognises_the_new_slug_immediately(self, conn: Connection) -> None:
+        normalizer = normalizer_for(conn, AmacoAdapter())
+        loader = Loader(conn, normalizer)
+        loader.upsert_glaze(
+            _product(slug="t-1-old-name", url="https://shop.amaco.com/t-1-old-name/"),
+            line_id=None,
+        )
+
+        loader.upsert_glaze(
+            _product(slug="t-1-new-name", url="https://shop.amaco.com/t-1-new-name/"),
+            line_id=None,
+        )
+        _, marked = loader.reconcile_listing("amaco", ["t-1-new-name"])
+
+        assert marked == []
