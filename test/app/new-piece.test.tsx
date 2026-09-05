@@ -6,7 +6,7 @@
 // about what the screen passed along.
 
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react-native";
-import { KeyboardAvoidingView, Platform } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform } from "react-native";
 import { router } from "expo-router";
 import { __raw } from "expo-sqlite";
 
@@ -144,4 +144,29 @@ it("drops the keyboard padding off iOS", () => {
   } finally {
     os.restore();
   }
+});
+
+it("stays usable when the write fails", async () => {
+  // Before this had a catch, a rejection left the control disabled and the label on
+  // "Creating…" for good: the only way out of the screen was to force-quit the app.
+  const alert = jest.spyOn(Alert, "alert").mockImplementation(() => {});
+  createPieceMock.mockRejectedValueOnce(new Error("disk full"));
+  render(<NewPieceScreen />);
+
+  fireEvent.changeText(screen.getByPlaceholderText(TITLE), "Morning mug");
+  await act(async () => {
+    fireEvent.press(screen.getByText("Create piece"));
+  });
+
+  expect(alert).toHaveBeenCalledWith("Couldn't create this piece", expect.any(String));
+  expect(router.replace).not.toHaveBeenCalled();
+  expect(rows()).toEqual([]);
+
+  // The label is back and a second attempt goes through, which is what "retryable" has to mean.
+  expect(screen.getByText("Create piece")).toBeTruthy();
+  await act(async () => {
+    fireEvent.press(screen.getByText("Create piece"));
+  });
+  expect(rows()).toHaveLength(1);
+  expect(router.replace).toHaveBeenCalledTimes(1);
 });

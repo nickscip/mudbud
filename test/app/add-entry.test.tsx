@@ -330,3 +330,28 @@ it("drops the keyboard padding off iOS", () => {
     os.restore();
   }
 });
+
+it("stays usable, and keeps what was typed, when the save fails", async () => {
+  // The failure this replaces was silent and total: the button read "Saving…" for good, the
+  // moment was lost, and the rejection went unhandled.
+  const alert = jest.spyOn(Alert, "alert").mockImplementation(() => {});
+  addEntryMock.mockRejectedValueOnce(new Error("disk full"));
+  render(<AddEntryScreen />);
+
+  fireEvent.changeText(screen.getByPlaceholderText(NOTE), "centered at last");
+  await act(async () => {
+    save();
+  });
+
+  expect(alert).toHaveBeenCalledWith("Couldn't save this moment", expect.any(String));
+  expect(router.back).not.toHaveBeenCalled();
+  expect(__raw().prepare("select count(*) as n from entries").get()).toEqual({ n: 0 });
+
+  // The note is still on screen and the control is live again, so the retry costs no retyping.
+  expect(screen.getByDisplayValue("centered at last")).toBeTruthy();
+  await act(async () => {
+    save();
+  });
+  expect(__raw().prepare("select count(*) as n from entries").get()).toEqual({ n: 1 });
+  expect(router.back).toHaveBeenCalledTimes(1);
+});
