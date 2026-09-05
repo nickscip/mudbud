@@ -735,8 +735,20 @@ Ordered roughly by what unblocks what — G1 gates everything.
   - `deploy-schema.yml` is the only sanctioned way to migrate a hosted database; its `apply`
     job `needs: verify`, so the container replay cannot be skipped.
   - `scripts/install-hooks.sh` installs a pre-push hook that runs the same verification.
-    **It exists because CI here is advisory:** required status checks need GitHub Pro or a
-    public repo, so a red run does not block a merge.
+    It exists because CI was once advisory. ~~required status checks need GitHub Pro or a
+    public repo, so a red run does not block a merge~~ — **no longer true, and it is worth
+    knowing before planning around it.** A ruleset named `main` has been active since
+    2026-07-28 and enforces all four CI jobs by name, plus `strict_required_status_checks_
+    policy`, so a branch must also be current with main. Measured on 2026-09-05 by having a
+    direct push to main rejected: `GH013 … Changes must be made through a pull request … 4
+    of 4 required status checks are expected`. So every change to main now goes through a
+    pull request, and the hook's value is catching a red run before the pull request rather
+    than instead of one.
+  - Because those four job names *are* the required contexts, a workflow that filters itself
+    out with `paths-ignore` would never report them: they sit pending forever and the pull
+    request cannot merge. That is why documentation-only skipping is a `changes` job the
+    others gate on with `if:` — a skipped job still reports its name, and a skipped check
+    counts as passing. It fails open, so anything it cannot classify runs the full suite.
   CI's Postgres is pinned to 17 to match the Supabase stack — server versions disagree about
   catalog output, which already bit one assertion.
   Still to add: whatever build or release automation G4–G8 settle on, and a way to test
