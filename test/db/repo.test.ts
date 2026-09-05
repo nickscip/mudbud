@@ -452,3 +452,77 @@ describe("glazeMarkQuery", () => {
     expect(await glazeMarkQuery({ manufacturer: "mayco", code: "PC-20" })).toBeUndefined();
   });
 });
+
+describe("addEntry when a media copy fails", () => {
+  // Every copy runs before any row is written, so a failure part way through has to leave the
+  // database exactly as it found it. Anything less and the retry the screen now offers would add
+  // the moment a second time, on top of the fragment the first attempt left behind.
+  const persistMediaMock = persistMedia as jest.MockedFunction<typeof persistMedia>;
+  const photo = (uri: string) => ({ type: "photo" as const, uri });
+
+  async function seedPiece() {
+    const pieceId = await createPiece({ title: "Mug" });
+    now = T0 + 1000;
+    return pieceId;
+  }
+
+  const stateOf = async (pieceId: string) => ({
+    piece: await pieceByIdQuery(pieceId),
+    entries: await entriesForPieceQuery(pieceId),
+    mediaCount: __raw().prepare("select count(*) as n from media").get(),
+  });
+
+  it("writes nothing when the first copy fails", async () => {
+    const pieceId = await seedPiece();
+    const before = await stateOf(pieceId);
+    persistMediaMock.mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(
+      addEntry({ pieceId, stage: "bisque", note: "lost", media: [photo("file:///a.jpg")] })
+    ).rejects.toThrow("disk full");
+
+    // Not merely "no entry row": the status ladder and the cover must not have moved either.
+    expect(await stateOf(pieceId)).toEqual(before);
+    expect(before.piece?.status).toBe("in_progress");
+  });
+
+  it("writes nothing and removes the copies already made when a later copy fails", async () => {
+    const pieceId = await seedPiece();
+    const before = await stateOf(pieceId);
+
+    persistMediaMock
+      .mockImplementationOnce(async (uri) => ({ id: "m-a", uri: `${uri}#copied` }))
+      .mockImplementationOnce(async (uri) => ({ id: "m-b", uri: `${uri}#copied` }))
+      .mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(
+      addEntry({
+        pieceId,
+        stage: "bisque",
+        media: [photo("file:///a.jpg"), photo("file:///b.jpg"), photo("file:///c.jpg")],
+      })
+    ).rejects.toThrow("disk full");
+
+    expect(await stateOf(pieceId)).toEqual(before);
+    // The two files copied before the failure belong to no row, so they are cleaned up.
+    expect(deleteMediaFile).toHaveBeenCalledWith("file:///a.jpg#copied");
+    expect(deleteMediaFile).toHaveBeenCalledWith("file:///b.jpg#copied");
+    expect(deleteMediaFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("adds exactly one moment when a retry follows a failure", async () => {
+    const pieceId = await seedPiece();
+    persistMediaMock.mockRejectedValueOnce(new Error("disk full"));
+    await expect(
+      addEntry({ pieceId, stage: "bisque", media: [photo("file:///a.jpg")] })
+    ).rejects.toThrow("disk full");
+
+    const id = await addEntry({ pieceId, stage: "bisque", media: [photo("file:///a.jpg")] });
+
+    const rows = await entriesForPieceQuery(pieceId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(id);
+    expect(rows[0].media).toHaveLength(1);
+    expect((await pieceByIdQuery(pieceId))?.status).toBe("bisqued");
+  });
+});

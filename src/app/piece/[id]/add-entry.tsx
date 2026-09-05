@@ -85,8 +85,18 @@ export default function AddEntryScreen() {
   const save = async () => {
     if (!canSave) return;
     setSaving(true);
-    await addEntry({ pieceId: id, stage, note, media: items });
-    router.back();
+    try {
+      await addEntry({ pieceId: id, stage, note, media: items });
+      router.back();
+    } catch {
+      // Without this the button read "Saving…" forever and the moment was simply lost. addEntry
+      // writes nothing on failure, so the items are still on screen and the retry is honest.
+      setSaving(false);
+      Alert.alert(
+        "Couldn't save this moment",
+        "Nothing was added to the timeline. Your photos are still here — try again."
+      );
+    }
   };
 
   return (

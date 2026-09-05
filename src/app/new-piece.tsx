@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import {
+  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -25,8 +26,15 @@ export default function NewPieceScreen() {
   const onCreate = async () => {
     if (!canSave) return;
     setSaving(true);
-    const id = await createPiece({ title, clayBody });
-    router.replace({ pathname: "/piece/[id]", params: { id } });
+    try {
+      const id = await createPiece({ title, clayBody });
+      router.replace({ pathname: "/piece/[id]", params: { id } });
+    } catch {
+      // Same failure as add-entry: a rejected write left the control disabled and the label
+      // stuck on "Creating…", with nothing to do but force-quit the app.
+      setSaving(false);
+      Alert.alert("Couldn't create this piece", "Nothing was saved. Try again.");
+    }
   };
 
   return (
