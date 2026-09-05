@@ -589,6 +589,32 @@ describe("useGlazeSearch", () => {
       expect(view.result.current.results.matches.map((hit) => hit.id)).toEqual([1]);
       expect(view.result.current.loadingMore).toBe(false);
     });
+
+    it("swallows an append failure that lands after the request key changed", async () => {
+      catalog.searchGlazes.mockImplementation(() =>
+        Promise.resolve(page({ matches: [glazeHit({ id: 1 })], hasMore: true, nextOffset: 40 }))
+      );
+      const view = renderHook(
+        ({ filters }: { filters: GlazeFilters }) => useGlazeSearch("blue", filters),
+        { initialProps: { filters: NO_FILTERS } }
+      );
+      await runDebounce();
+
+      const pending = deferred<SearchPage>();
+      catalog.searchGlazes.mockImplementation(() => pending.promise);
+      act(() => {
+        view.result.current.loadMore();
+      });
+
+      view.rerender({ filters: { manufacturerIds: [2] } });
+
+      await act(async () => {
+        pending.reject(new Error("page two denied"));
+      });
+
+      // The error belongs to a search nobody is looking at any more.
+      expect(view.result.current.loadMoreError).toBeNull();
+    });
   });
 });
 
