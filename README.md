@@ -99,7 +99,8 @@ npx expo export --platform ios   # full bundle smoke test
 # Before applying a migration anywhere: replays the whole history into a throwaway
 # database and asserts the RPC contract, the anon grants and the query plans.
 scripts/verify-schema.sh
-node --experimental-strip-types scripts/test-device-db.mjs   # local SQLite upgrade path
+npm test                         # Jest over src/, gated at 90% coverage
+npm test -- test/db              # just the local SQLite schema and upgrade path
 
 cd etl
 uv run ruff check .              # lint

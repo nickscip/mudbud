@@ -53,8 +53,8 @@ failed=0
 
 if git diff --name-only $range -- src/db | grep -q .; then
   echo "pre-push: device database"
-  if ! node --experimental-strip-types scripts/test-device-db.mjs >/dev/null 2>&1; then
-    node --experimental-strip-types scripts/test-device-db.mjs || true
+  if ! npx jest test/db --silent >/dev/null 2>&1; then
+    npx jest test/db || true
     failed=1
   else
     echo "  ok"

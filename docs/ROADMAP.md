@@ -719,7 +719,8 @@ Ordered roughly by what unblocks what — G1 gates everything.
     and runs `supabase/tests/schema/*.sql`: `search_smoke.sql` for behaviour, `contract.sql`
     for the surface (one overload per RPC, the frozen `glaze_hit` column list, the exact anon
     grant set, row security, vocabulary invariants), and `pagination.sql` for plan shape.
-  - `app` — typecheck, `scripts/test-device-db.mjs` for the local SQLite upgrade path, bundle.
+  - `app` — typecheck, `npm test` (Jest over `src/`, failing below 90% of statements, lines,
+    functions and branches), bundle.
   - `sync-catalog.yml` runs `supabase/tests/data_quality.sql` after a load, so a crawl that
     parses to nothing fails loudly instead of shipping. Skipped for a capped `--limit` run,
     which is a deliberate partial load.
@@ -730,14 +731,14 @@ Ordered roughly by what unblocks what — G1 gates everything.
     public repo, so a red run does not block a merge.
   CI's Postgres is pinned to 17 to match the Supabase stack — server versions disagree about
   catalog output, which already bit one assertion.
-  Still to add: whatever build or release automation G4–G8 settle on, and a way to test
-  `src/db/repo.ts`. That last one is a real gap rather than a wish — `test-device-db.mjs` runs
-  DDL strings against `node:sqlite`, so it proves the upgrade path and nothing about the repo
-  functions above it, which is how C4 shipped a review round with a note-losing guard in
-  `setGlazeMarkNote`. The invariants worth asserting are all in one file: favourite only on
-  owned, notes only on a row that exists, whitespace stored as NULL, and demotion keeping the
-  note. Needs a Drizzle-over-`node:sqlite` harness or an equivalent, since the repo imports
-  expo-sqlite.
+  The `src/db/repo.ts` gap named here is closed. It wanted "a Drizzle-over-`node:sqlite`
+  harness, since the repo imports expo-sqlite", and that is what `__mocks__/expo-sqlite.ts` is:
+  drizzle's driver talks to a real in-memory SQLite, so the repo functions, the relational
+  queries and every `useLiveQuery` screen run their actual statements. The four invariants it
+  listed — favourite only on owned, notes only on a row that exists, whitespace stored as NULL,
+  demotion keeping the note — are asserted in `test/db/repo.test.ts`, which is where the
+  note-losing guard from C4 would now be caught.
+  Still to add: whatever build or release automation G4–G8 settle on.
 
 ## Epic H — Mud Bud, and the style layer
 
