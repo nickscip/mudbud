@@ -24,10 +24,18 @@ Facts to keep in mind while reading:
   the catalog is 982 glazes and 4148 appearances. All 25 lines resolved, 620 of 630 carry a
   cone range (the 10 that do not are the 6 raku, for which Mayco publishes none, and the 4
   products filed under no line at all), and every one has an appearance and colour terms.
-  `data_quality.sql` passes against the hosted database, per-brand floors included. One
-  parse issue: a single image of SW-511 hit a transient Storage error and is filed for
-  triage — clearing it needs a reparse, which E6 (now done) had made lossy; running that
-  reparse against hosted is a follow-up for the owner, not part of E6 itself.
+  `data_quality.sql` passes against the hosted database, per-brand floors included.
+  **The one open parse issue is closed** (2026-09-05): SW-511 (Mayco, not AMACO —
+  corrected here since an earlier note misnamed the brand) had one image whose upload hit
+  a transient Storage error during the original crawl, leaving `glaze_images` row 12580
+  with `storage_path`/`sha256`/`width`/`height` all null. Fixing it needed E6 first: the
+  actual write path is `load`, not `reparse` (`reparse` only reports parser confidence and
+  never writes, `--dry-run` or not — a separate CLI wart, not in scope here), and before
+  E6, `load` would have silently nulled every other Mayco appearance's measured colour on
+  the way to fixing this one image. With E6 in, `uv run glaze-etl load sw-511-pink-gloss
+  --manufacturer mayco` against hosted re-fetched and stored the missing image
+  (`808af5cfe666…`, 1440×1440) and confirmed all 7 of SW-511's appearances carry a `hex`.
+  Scoped to the one slug; nothing else was touched.
 - **`etl/.env` points `SUPABASE_DB_URL` at the hosted project, not at the local stack.** So
   a bare `glaze-etl sync` writes to production. Override the three `SUPABASE_*` variables on
   the command line for local work. This is worth knowing before the first run, not after.
@@ -288,9 +296,9 @@ E4 is Python work on a pipeline that already runs.
   Regression coverage runs `pipeline.ingest_product` end-to-end against a real, disposable
   Postgres rather than only unit-level writer calls, plus a direct `AppearanceWriter` test for
   the schema-permitted-but-pipeline-unreachable duplicate-row case.
-  This change does not itself touch the hosted database or rerun the SW-511 reparse — clearing
-  that queued parse issue is a deliberate follow-up for the owner now that a reparse is safe to
-  run, not part of this change.
+  This change did not itself touch the hosted database or clear the queued SW-511 parse
+  issue — that was a deliberate follow-up for the owner, now closed (see the Facts note
+  above: `load`, not `reparse`, and the brand was Mayco, not AMACO).
 - **E5 · Orphan blob GC** — **done.** Ships `glaze-etl gc --manufacturer <key>`: reports
   by default (referenced/bucket counts, orphaned sha/object counts, anything held back
   or unparseable), and only deletes with `--prune`. Destructive runs require a configured
@@ -319,9 +327,10 @@ E4 is Python work on a pipeline that already runs.
   idle-transaction eviction threshold to prove the heartbeat is what preserves it. Ships the
   sweep and its tests only —
   it has not been run against the hosted database or bucket, which remains a deliberate
-  follow-up for the owner, exactly as E6's entry deferred the SW-511 reparse. The required
-  credentialed Storage checks include never-uploaded and already-removed keys so a benign
-  concurrent-prune race is verified as a no-op before any hosted run.
+  follow-up for the owner — the same shape of deferral E6's entry left for SW-511, since
+  closed. The required credentialed Storage checks include never-uploaded and
+  already-removed keys so a benign concurrent-prune race is verified as a no-op before any
+  hosted run.
   **First hosted dry run, 2026-09-05:** Mayco clean (0 of 10724 objects orphaned); AMACO
   **4084 of 8124 objects orphaned (1021 shas)** — far past the 10% refusal. Root cause was
   two things compounding, both measured rather than guessed. (1) Every scheduled AMACO sync
@@ -726,8 +735,20 @@ Ordered roughly by what unblocks what — G1 gates everything.
   - `deploy-schema.yml` is the only sanctioned way to migrate a hosted database; its `apply`
     job `needs: verify`, so the container replay cannot be skipped.
   - `scripts/install-hooks.sh` installs a pre-push hook that runs the same verification.
-    **It exists because CI here is advisory:** required status checks need GitHub Pro or a
-    public repo, so a red run does not block a merge.
+    It exists because CI was once advisory. ~~required status checks need GitHub Pro or a
+    public repo, so a red run does not block a merge~~ — **no longer true, and it is worth
+    knowing before planning around it.** A ruleset named `main` has been active since
+    2026-07-28 and enforces all four CI jobs by name, plus `strict_required_status_checks_
+    policy`, so a branch must also be current with main. Measured on 2026-09-05 by having a
+    direct push to main rejected: `GH013 … Changes must be made through a pull request … 4
+    of 4 required status checks are expected`. So every change to main now goes through a
+    pull request, and the hook's value is catching a red run before the pull request rather
+    than instead of one.
+  - Because those four job names *are* the required contexts, a workflow that filters itself
+    out with `paths-ignore` would never report them: they sit pending forever and the pull
+    request cannot merge. That is why documentation-only skipping is a `changes` job the
+    others gate on with `if:` — a skipped job still reports its name, and a skipped check
+    counts as passing. It fails open, so anything it cannot classify runs the full suite.
   CI's Postgres is pinned to 17 to match the Supabase stack — server versions disagree about
   catalog output, which already bit one assertion.
   Still to add: whatever build or release automation G4–G8 settle on, and a way to test
