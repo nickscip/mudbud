@@ -322,6 +322,35 @@ E4 is Python work on a pipeline that already runs.
   follow-up for the owner, exactly as E6's entry deferred the SW-511 reparse. The required
   credentialed Storage checks include never-uploaded and already-removed keys so a benign
   concurrent-prune race is verified as a no-op before any hosted run.
+  **First hosted dry run, 2026-09-05:** Mayco clean (0 of 10724 objects orphaned); AMACO
+  **4084 of 8124 objects orphaned (1021 shas)** — far past the 10% refusal. Root cause was
+  two things compounding, both measured rather than guessed. (1) Every scheduled AMACO sync
+  since August reported `changed 352 unchanged 0`: BigCommerce had added three kinds of
+  per-request noise the first-pass `VOLATILE_PATTERNS` did not strip — a `priceValidUntil`
+  that is always fetch-date-plus-a-year, a per-request `storefront_token` JWT, and an
+  intermittent `/nobot` beacon `<script>` — so every page re-ingested and every image
+  re-downloaded weekly. (2) BigCommerce's stencil CDN does not return byte-identical files
+  for the same URL: 10 of 30 re-downloads of currently referenced images hashed differently,
+  so each weekly pass minted a new sha for about a third of the corpus and orphaned the old
+  one. Fix shipped for (1) — three more patterns, proven against the hosted 2026-08-24
+  snapshot where the only residual is a real `Out of stock` change. (2) is left alone on
+  purpose: with (1) fixed, images only re-download when a page genuinely changes, and `gc`
+  exists for the trickle. The one-time `--prune --force` of the 4084 dead renditions is the
+  owner's call, after the first post-fix Monday shows `unchanged ≈ 352`.
+- **E7 · Evergreen catalog: nothing is deleted, and absence is marked** — **done.** Nothing
+  ever deleted a glaze — a 404 was logged `gone` and skipped, a product missing from the
+  sitemap was simply never visited — so rows already persisted. But nothing *marked* them,
+  and `last_seen_at` only moved on re-ingest, so Mayco's 628 rows read 2026-07-30 while being
+  listed every week. Now a whole-catalog `sync` (not `--limit`, not a slug run) stamps every
+  discovered product `last_seen_at = now()` and sets `availability = 'Unavailable'` on any
+  glaze absent from the listing or answering 404/410. Guarded by `listing_is_complete`: a
+  discovery that returns fewer than half the glazes already held is a broken sitemap, not a
+  mass withdrawal, and the reconcile is skipped with a warning. A relisted product is
+  re-ingested by the normal path and its real availability overwrites the marker. The word is
+  deliberately vague — we know the page is gone, not why. The app renders it as an
+  `Unavailable` chip on the detail screen and leads the card's evidence line with it; no
+  schema or RPC change, since `availability` was already in `glaze_hit`. Neither AMACO nor
+  Mayco has been observed deleting a product yet; this is support for when one does.
 
 ## Epic F — Mayco, and making ingestion source-agnostic
 

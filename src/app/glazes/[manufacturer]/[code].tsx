@@ -20,6 +20,7 @@ import { SegmentedTabs } from "@/components/SegmentedTabs";
 import { SwatchTile } from "@/components/SwatchTile";
 import { GlazeCard, stripCode } from "@/components/GlazeCard";
 import {
+  availabilityLabel,
   describeConeRange,
   describePriceFrom,
   photographCredit,
@@ -210,7 +211,7 @@ export default function GlazeDetailScreen() {
               glaze.surface,
               glaze.food_safe ? "Food safe" : null,
               glaze.ap_seal ? "AP seal" : null,
-              glaze.availability === "InStock" ? null : "Out of stock",
+              availabilityLabel(glaze.availability),
             ]
               .filter((spec): spec is string => Boolean(spec))
               .map((spec) => (

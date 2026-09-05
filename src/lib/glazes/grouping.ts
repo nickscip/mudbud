@@ -61,6 +61,27 @@ export function productHost(url: string): string | null {
   }
 }
 
+/**
+ * The availability chip, or nothing when there is nothing to say.
+ *
+ * `InStock` / `OutOfStock` are the manufacturer's own words. `Unavailable` is ours: the ETL
+ * writes it when a product drops out of the manufacturer's listing, and the row is kept
+ * because the catalog is evergreen — someone with that jar still wants its page. The word is
+ * deliberately vague; a page that vanished could be discontinued, renamed or a site mistake,
+ * and we only know it is not there.
+ */
+export function availabilityLabel(availability: string | null): string | null {
+  switch (availability) {
+    case null:
+    case "InStock":
+      return null;
+    case "Unavailable":
+      return "Unavailable";
+    default:
+      return "Out of stock";
+  }
+}
+
 export function describeConeRange(from: string | null, to: string | null): string {
   if (!from && !to) return "Cone not stated";
   if (from && to && from !== to) return `Cone ${from}–${to}`;

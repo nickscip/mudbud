@@ -25,6 +25,10 @@ type Props = {
  */
 export function GlazeCard({ glaze, onPress, state, favorite }: Props) {
   const evidence: string[] = [];
+  // Leads the line: whether you can still buy it decides whether the rest matters.
+  if (glaze.availability === "Unavailable") {
+    evidence.push("unavailable");
+  }
   if (glaze.coat_levels_available > 0) {
     evidence.push(`${glaze.coat_levels_available} coats`);
   }

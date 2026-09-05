@@ -12,6 +12,7 @@ that AMACO has withdrawn simply leaves the link null instead of failing the load
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import psycopg
@@ -24,6 +25,25 @@ from glaze_etl.core.normalizer import Normalizer
 from glaze_etl.core.payloads import ImagePayload, RegionPayload
 
 log = structlog.get_logger(__name__)
+
+
+UNAVAILABLE = "Unavailable"
+"""`glazes.availability` for a product the manufacturer's site no longer lists. The other
+values (`InStock`, `OutOfStock`) are the manufacturer's own words; this one is ours, and the
+app renders it as-is."""
+
+LISTING_FLOOR = 0.5
+
+
+def listing_is_complete(discovered: int, known: int) -> bool:
+    """Whether a discovery pass found enough of the catalog to be believed about absences.
+
+    A sitemap outage or a changed URL scheme returns a handful of products, not none, so
+    "found at least one" is no guard. Fewer than half of what we already hold is read as a
+    broken listing, and `reconcile_listing` is skipped for that run rather than marking most
+    of a catalog unavailable. A brand with nothing loaded yet has nothing to protect.
+    """
+    return known == 0 or discovered >= known * LISTING_FLOOR
 
 
 @dataclass
@@ -119,6 +139,13 @@ class Loader:
             on conflict (manufacturer_id, code) do update set
               line_id = excluded.line_id,
               name = excluded.name,
+              -- A manufacturer can rename a product's URL slug while keeping its code —
+              -- Mayco's Store API SKU is the stable identity, the slug is not. Without
+              -- this, the stored slug goes stale, `reconcile_listing` no longer sees the
+              -- product it just re-ingested in the fresh listing, and marks it Unavailable
+              -- on the same run that successfully updated it.
+              slug = excluded.slug,
+              product_url = excluded.product_url,
               description = excluded.description,
               surface_id = excluded.surface_id,
               opacity_id = excluded.opacity_id,
@@ -169,6 +196,75 @@ class Loader:
         ).fetchone()
         self.stats.glazes += 1
         return _row_id(row)
+
+    # ---------------------------------------------------------------- listing
+    def glaze_count(self, manufacturer: str) -> int:
+        row = self._conn.execute(
+            "select count(*) from glazes g join manufacturers m on m.id = g.manufacturer_id "
+            "where m.key = %s",
+            (manufacturer,),
+        ).fetchone()
+        count = row[0] if row else 0
+        assert isinstance(count, int)
+        return count
+
+    def unavailable_slugs(self, manufacturer: str) -> set[str]:
+        """Slugs currently marked `UNAVAILABLE` for one manufacturer.
+
+        `sync` uses this to force a re-ingest when such a glaze's page fetches
+        `UNCHANGED` — the "only touch what changed" fast path never runs for it
+        otherwise, so a row marked unavailable while briefly missing from a listing
+        would stay marked forever once its page stopped producing fresh bytes,
+        even though it is listed again.
+        """
+        rows = self._conn.execute(
+            """
+            select g.slug from glazes g join manufacturers m on m.id = g.manufacturer_id
+            where m.key = %s and g.availability = %s
+            """,
+            (manufacturer, UNAVAILABLE),
+        ).fetchall()
+        return {str(r[0]) for r in rows}
+
+    def reconcile_listing(
+        self, manufacturer: str, listed_slugs: Iterable[str]
+    ) -> tuple[int, list[str]]:
+        """Record which of a manufacturer's glazes its site still lists.
+
+        Ingest only touches a product whose page changed, so `last_seen_at` had drifted into
+        meaning "last re-parsed" — Mayco's rows read 2026-07-30 while being listed every
+        week. Here every listed glaze is stamped seen, and every glaze *absent* from the
+        listing gets `availability = UNAVAILABLE`. The word is deliberately vague: a page
+        that vanished could be discontinued, renamed, or a site mistake, and we only know
+        that it is not there. Nothing is deleted: the catalog is evergreen on purpose, so a
+        potter holding an old jar can still look it up after the manufacturer pulls the
+        page. A product that is listed again is re-ingested by the normal path, and its
+        real availability overwrites the marker.
+
+        Returns (rows stamped seen, codes newly marked unavailable). The caller decides
+        whether the listing can be trusted — see `listing_is_complete`.
+        """
+        slugs = list(listed_slugs)
+        seen = self._conn.execute(
+            """
+            update glazes g set last_seen_at = now()
+            from manufacturers m
+            where m.id = g.manufacturer_id and m.key = %s and g.slug = any(%s)
+            """,
+            (manufacturer, slugs),
+        ).rowcount
+        rows = self._conn.execute(
+            """
+            update glazes g set availability = %s
+            from manufacturers m
+            where m.id = g.manufacturer_id and m.key = %s
+              and not (g.slug = any(%s))
+              and g.availability is distinct from %s
+            returning g.code
+            """,
+            (UNAVAILABLE, manufacturer, slugs, UNAVAILABLE),
+        ).fetchall()
+        return seen, sorted(str(r[0]) for r in rows)
 
     def inherit_line_cones(self) -> int:
         """Give every glaze a cone range, falling back to its line's.
