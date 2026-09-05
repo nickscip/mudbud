@@ -24,10 +24,18 @@ Facts to keep in mind while reading:
   the catalog is 982 glazes and 4148 appearances. All 25 lines resolved, 620 of 630 carry a
   cone range (the 10 that do not are the 6 raku, for which Mayco publishes none, and the 4
   products filed under no line at all), and every one has an appearance and colour terms.
-  `data_quality.sql` passes against the hosted database, per-brand floors included. One
-  parse issue: a single image of SW-511 hit a transient Storage error and is filed for
-  triage — clearing it needs a reparse, which E6 (now done) had made lossy; running that
-  reparse against hosted is a follow-up for the owner, not part of E6 itself.
+  `data_quality.sql` passes against the hosted database, per-brand floors included.
+  **The one open parse issue is closed** (2026-09-05): SW-511 (Mayco, not AMACO —
+  corrected here since an earlier note misnamed the brand) had one image whose upload hit
+  a transient Storage error during the original crawl, leaving `glaze_images` row 12580
+  with `storage_path`/`sha256`/`width`/`height` all null. Fixing it needed E6 first: the
+  actual write path is `load`, not `reparse` (`reparse` only reports parser confidence and
+  never writes, `--dry-run` or not — a separate CLI wart, not in scope here), and before
+  E6, `load` would have silently nulled every other Mayco appearance's measured colour on
+  the way to fixing this one image. With E6 in, `uv run glaze-etl load sw-511-pink-gloss
+  --manufacturer mayco` against hosted re-fetched and stored the missing image
+  (`808af5cfe666…`, 1440×1440) and confirmed all 7 of SW-511's appearances carry a `hex`.
+  Scoped to the one slug; nothing else was touched.
 - **`etl/.env` points `SUPABASE_DB_URL` at the hosted project, not at the local stack.** So
   a bare `glaze-etl sync` writes to production. Override the three `SUPABASE_*` variables on
   the command line for local work. This is worth knowing before the first run, not after.
@@ -288,9 +296,9 @@ E4 is Python work on a pipeline that already runs.
   Regression coverage runs `pipeline.ingest_product` end-to-end against a real, disposable
   Postgres rather than only unit-level writer calls, plus a direct `AppearanceWriter` test for
   the schema-permitted-but-pipeline-unreachable duplicate-row case.
-  This change does not itself touch the hosted database or rerun the SW-511 reparse — clearing
-  that queued parse issue is a deliberate follow-up for the owner now that a reparse is safe to
-  run, not part of this change.
+  This change did not itself touch the hosted database or clear the queued SW-511 parse
+  issue — that was a deliberate follow-up for the owner, now closed (see the Facts note
+  above: `load`, not `reparse`, and the brand was Mayco, not AMACO).
 - **E5 · Orphan blob GC** — **done.** Ships `glaze-etl gc --manufacturer <key>`: reports
   by default (referenced/bucket counts, orphaned sha/object counts, anything held back
   or unparseable), and only deletes with `--prune`. Destructive runs require a configured
@@ -319,9 +327,10 @@ E4 is Python work on a pipeline that already runs.
   idle-transaction eviction threshold to prove the heartbeat is what preserves it. Ships the
   sweep and its tests only —
   it has not been run against the hosted database or bucket, which remains a deliberate
-  follow-up for the owner, exactly as E6's entry deferred the SW-511 reparse. The required
-  credentialed Storage checks include never-uploaded and already-removed keys so a benign
-  concurrent-prune race is verified as a no-op before any hosted run.
+  follow-up for the owner — the same shape of deferral E6's entry left for SW-511, since
+  closed. The required credentialed Storage checks include never-uploaded and
+  already-removed keys so a benign concurrent-prune race is verified as a no-op before any
+  hosted run.
   **First hosted dry run, 2026-09-05:** Mayco clean (0 of 10724 objects orphaned); AMACO
   **4084 of 8124 objects orphaned (1021 shas)** — far past the 10% refusal. Root cause was
   two things compounding, both measured rather than guessed. (1) Every scheduled AMACO sync
