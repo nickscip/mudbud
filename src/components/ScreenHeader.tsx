@@ -33,6 +33,9 @@ export function ScreenHeader({
       <PressableScale
         onPress={onBack ?? (() => router.back())}
         hitSlop={8}
+        // Icon-only, so without this it announces as an unlabelled button — the one control in
+        // the app that still did, which writing its test is what surfaced.
+        accessibilityLabel={backIcon === "close" ? "Close" : "Back"}
         className="h-10 w-10 items-center justify-center rounded-full bg-stone-50 border border-stone-200"
       >
         <Ionicons

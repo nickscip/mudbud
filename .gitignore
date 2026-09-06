@@ -58,3 +58,13 @@ etl/.ruff_cache/
 __pycache__/
 *.py[cod]
 etl/.blobs/
+
+# Worktrees created by EnterWorktree live inside the checkout; never commit their contents.
+.claude/worktrees/
+
+# pytest-cov data file
+etl/.coverage
+
+# Jest coverage output
+coverage/
+etl/coverage.json
