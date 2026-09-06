@@ -18,7 +18,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 DSN="${1:?usage: apply-migrations.sh <dsn> [psql-binary]}"
-PSQL="${2:-psql}"
+
+# The second argument stays an override for the two callers that have already resolved a client
+# (verify-schema.sh, check-migration-ledger.sh). What changed is the fallback: it used to be a bare
+# `psql`, which on a machine whose Homebrew client is linked against a mismatched libpq dies with
+# `Symbol not found: _PQbackendPID` before it ever connects — and this script is invoked directly
+# by CI and by the AGENTS.md recipe, so that path was the one place the repo did *not* route
+# around a broken client despite saying it did.
+source scripts/lib/find-psql.sh
+PSQL="${2:-$(find_psql)}"
 
 # DDL takes an ACCESS EXCLUSIVE lock, and a lock request queues *ahead* of every later reader. So
 # against a live database an ALTER waiting behind one long-running query does not merely wait — it
