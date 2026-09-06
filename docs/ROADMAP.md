@@ -534,16 +534,25 @@ the "no edits" claim above is now over a smaller surface than the branch itself 
   classified as a composite; the adapter maps its four left-to-right regions to Mayco's scoped
   `1`–`4` vocabulary. The detector requires the fixture-backed slab and count-label geometry,
   otherwise it records a refusal and retains the existing whole-image fallback. Overlaps E4.
-- **F8a · Mayco's clays are named, not numbered** — **partial: the lookup scoping is done,
-  the clay *names* are not.** The original title ("`Vocabularies.clay_bodies` is not
-  manufacturer-scoped") described a bug that no longer exists: the flat `dict[str, int]` of
-  code→id loaded across every manufacturer went with F8's Stage 2, and both scoped tables are
-  read by owner now, so two brands sharing a clay code resolve to their own rows. What remains
-  is the half that needs new data: Mayco names its clays ("White Clay", "Speckled Clay") rather than numbering them,
-  while `ImageFacts.clay_body_number` is an integer keyed on AMACO's numbered clays and Mayco
-  has no `clay_bodies` rows seeded at all. Until a name-carrying field and those rows exist,
-  Mayco's clay-body alt text stays real evidence that D3's on-different-clays rail cannot
-  use.
+- **F8a · Mayco's clays are named, not numbered** — **done.** The lookup half went with F8's
+  Stage 2; this closed the data half. `ImageFacts.clay_body_number: int` became
+  `clay_body_code: str` — `clay_bodies.code` was text all along and the int was AMACO leaking
+  into the shared model — so AMACO emits `"16"` and Mayco emits `"white"` through one field
+  and one lookup. `20260905000100_mayco_clay_bodies.sql` seeds seven Mayco rows and the
+  contract test pins them. The set was **measured, not recalled**: a sweep of all 657 fired
+  products (2985 images) on 2026-09-05 found the same five labels — white, speckled, red, dark
+  brown, black — in four independent image series, `wheat` only in the 2026 release, and
+  `_dark_clay_web` on 64 Stoneware filenames with no alt text. `dark` is its own row because
+  nothing in the corpus says whether it is Dark Brown or Black; merge on evidence, not
+  resemblance. Two merges *are* evidenced by filename/alt pairings: "speckled brown" and
+  "brown speckled" are `speckled_clay_standard_212`; bare "brown" is `brown_clay_standard_266`,
+  which the engobe series calls "Dark Brown Clay". Filename beats alt, because the 2026 release
+  alt is copy-pasted (`black_clay_si02_black_ice` says "dark brown"). An alt naming several
+  clays sets none — one image, four clays, one column. Against the swept corpus the grammar
+  resolves 284 images (229 in appearance-bearing roles, 55 line charts) and refuses 24, all of
+  them multi-clay tiles or `clay_bodies_test` filenames. Deploy order is free: the new ETL on
+  the old schema files `unknown_clay_body` and writes null. No app change — the RPCs already
+  return `cb.name`, and D3's on-different-clays rail filters on `clay_body !== null`.
 - **F9 · Tests and fixtures were single-source shaped** — **done**, except the part that
   needs Mayco to exist. `tests/fixtures/<key>/` mirrors the registry (the AMACO images
   moved under `fixtures/amaco/images/`), conftest's helpers take a source parameter and
@@ -840,14 +849,11 @@ Kept separate so nobody picks up a UI ticket and discovers the well is dry.
   `oxidation` throughout), and it changes how a glaze looks more than most axes we do model.
   There is no field on `ImageFacts` and no column on `appearances`. The grammar reports it as
   an unmatched token so it shows up rather than vanishing.
-- **Clay body by name** — same shape of gap, and now a smaller one. Mayco's alt text says
-  "White Clay, cone 6 oxidation", while `ImageFacts.clay_body_number` is an integer keyed on
-  AMACO's numbered clays. The *lookup* is no longer the problem — F8a's half of F8 Stage 2
-  scoped `Vocabularies.clay_bodies` to one manufacturer, so a shared code can no longer
-  resolve to another brand's row. What is missing is a model and the data behind it: a
-  name-carrying field on `ImageFacts`, and Mayco `clay_bodies` rows, of which there are
-  currently none. So D3's on-different-clays rail still has Mayco evidence available and
-  unused.
+- ~~**Clay body by name**~~ — closed by F8a: `ImageFacts.clay_body_code` is text, Mayco's
+  seven clays are seeded, and the grammar reads them from filename and alt. What is still not
+  modelled is the *actual* body behind Mayco's label — the 2026 filenames name Standard 181/
+  212/308/266, Runyan Wheat and SiO2 Black Ice — which would be a cross-manufacturer clay
+  table, not a Mayco vocabulary row. Not asked for yet.
 - **Photograph credit, for anyone** — `glaze_images.credit` exists and no adapter has ever
   set it: AMACO burns the photographer's name into the image, and Mayco publishes none. The
   app shows `Photograph © <brand>` for every image because that is all there is.
@@ -910,8 +916,8 @@ Not a commitment, just the dependency-respecting reading of the above.
    them the seam being *tested* rather than the seam being wrong: `conftest` learned that a
    stored body need not be HTML, `glaze_hit` gained two columns, and the app stopped
    spelling brands by uppercasing a key. **F8 is now done too**, in two stages — the schema
-   migration and the ETL lookup it gated — which leaves F8b (the four-tile splitter), F8a's
-   clay-name half, and F15/F16.
+   migration and the ETL lookup it gated — and F8a's clay-name half followed on 2026-09-05,
+   which leaves F8b (the four-tile splitter) and F15/F16.
 6. **Search depth** — A3's line/opacity client work, A4's wiring half and A7 are done; surface
    waits on populated data. A5 now has the Expo Go-safe modal shell but still needs a live result
    count. A6's pagination is deployed and proved against hosted data, so the invisible 40-row cap

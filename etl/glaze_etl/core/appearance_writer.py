@@ -199,7 +199,7 @@ class AppearanceWriter:
 
         resolved = self._normalizer.resolve_appearance(
             cone=facts.cone,
-            clay_body_number=facts.clay_body_number,
+            clay_body_code=facts.clay_body_code,
             form=facts.form,
             coat_level=facts.coat_level,
         )

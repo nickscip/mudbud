@@ -27,7 +27,7 @@ from pathlib import Path
 from glaze_etl.core.models import Confidence, FormKind, ImageFacts, ImageRole
 from glaze_etl.sources.mayco.vocabulary import (
     ATMOSPHERE_WORDS,
-    CLAY_WORDS,
+    CLAY_PHRASES,
     FORM_KEYWORDS,
     LINE_IMAGE_WORDS,
     NOISE_WORDS,
@@ -55,6 +55,19 @@ _DIRECTION_RE = re.compile(r"^[-_ ]*(over|under)[-_ ]*$")
 """What sits between two codes must be exactly `over` or `under` to establish an order.
 `sw214_over_sw401_sw402` has three codes and therefore no single pair — recorded as a
 combination rather than resolved into one that happens to read left to right."""
+
+_CLAY_ALT = "|".join(
+    phrase.replace(" ", "[-_ ]") for phrase in sorted(CLAY_PHRASES, key=len, reverse=True)
+)
+_CLAY_RE = re.compile(rf"(?<![a-z0-9])({_CLAY_ALT})[-_ ]clay(?![a-z0-9])")
+"""A colour word (or two) immediately before `clay`: `dark_clay_web`, "on speckled brown
+clay". Longest phrase first, so `dark brown clay` is one clay and not `brown` with a stray
+`dark`. Applied to the filename stem and to lowercased alt text alike."""
+
+
+def _clay_code(match: re.Match[str]) -> str:
+    return CLAY_PHRASES[re.sub(r"[-_ ]", " ", match.group(1))]
+
 
 _SIZE_SUFFIX_RE = re.compile(r"-\d{2,4}x\d{2,4}$")
 _SCALED_SUFFIX_RE = re.compile(r"-scaled$")
@@ -138,9 +151,9 @@ def interpret_filename(
     """Read every fact the filename and alt text state, and no more.
 
     ``alt`` is a second evidence channel rather than a fallback: Mayco's cone often appears
-    in both, and its clay-body wording appears only in alt. It is consulted for cone when
-    the filename is silent, and its words join `unmatched_tokens` so a fact stated only
-    there is visible instead of lost.
+    in both, and its clay-body wording is usually only in alt. It is consulted for cone and
+    clay when the filename is silent, and its unresolved words join `unmatched_tokens` so a
+    fact stated only there is visible instead of lost.
     """
     stem = _stem(filename)
     consumed: list[tuple[int, int]] = []
@@ -214,6 +227,24 @@ def interpret_filename(
         cone = match.group(1)
         evidence["cone_from_alt"] = match.group(0)
 
+    # --- clay body, from the filename first and the alt text second ------------------
+    # Same precedence as cone, and here it matters: the 2026 release alt is copy-pasted
+    # (`black_clay_si02_black_ice` and `brown_clay_standard_266` both say "dark brown
+    # clay"), while the filename names the actual body.
+    clay_body: str | None = None
+    if match := _CLAY_RE.search(stem):
+        clay_body = _clay_code(match)
+        consumed.append(match.span())
+        evidence["clay_body"] = match.group(0)
+    elif alt:
+        in_alt = list(_CLAY_RE.finditer(alt.lower()))
+        if len({_clay_code(m) for m in in_alt}) == 1:
+            # Exactly one clay. Melt Gloop's alt lists four — "(speckled clay, red clay,
+            # brown clay, black clay)" — and `appearances.clay_body_id` holds one, so that
+            # image gets none rather than whichever Mayco happened to write first.
+            clay_body = _clay_code(in_alt[0])
+            evidence["clay_body_from_alt"] = in_alt[0].group(0)
+
     # --- coats: only the verified four-count marker is a composite ------------------
     coats: str | None = None
     if match := _COATS_RE.search(stem):
@@ -237,12 +268,14 @@ def interpret_filename(
 
     unmatched = _tokens(stem, consumed)
     if alt:
-        # Atmosphere and clay body are stated and have nowhere to go — see the notes on
-        # ATMOSPHERE_WORDS and CLAY_WORDS. Surfacing them keeps the gap visible.
+        # Atmosphere is stated and has nowhere to go — see ATMOSPHERE_WORDS. `clay` joins
+        # it only when the alt mentions clay and no clay was resolved: a spelling
+        # CLAY_PHRASES does not know, or several clays in one frame. Either way the gap
+        # stays visible instead of reading as "not stated".
         alt_words = tuple(
             word
             for word in re.split(r"[^a-z0-9]+", alt.lower())
-            if word in ATMOSPHERE_WORDS or word in CLAY_WORDS
+            if word in ATMOSPHERE_WORDS or (word == "clay" and clay_body is None)
         )
         unmatched = tuple(dict.fromkeys(unmatched + alt_words))
 
@@ -257,6 +290,7 @@ def interpret_filename(
         layered_over_code=layered_over,
         combination_codes=combination,
         cone=cone,
+        clay_body_code=clay_body,
         form=form,
         confidence=_confidence(subject, codes, combination, unmatched),
         unmatched_tokens=unmatched,

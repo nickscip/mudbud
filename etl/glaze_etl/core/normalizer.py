@@ -1,7 +1,7 @@
 """Maps scraped values onto the seeded vocabularies' primary keys.
 
 This is the layer that refuses to invent things. The grammar yields human-facing values —
-clay number `16`, cone name `"05"`, opacity `"opaque"` — while every column in
+clay code `"16"` or `"white"`, cone name `"05"`, opacity `"opaque"` — while every column in
 `appearances` is a foreign key. Resolving one to the other is the last chance to notice
 that a value is not in our vocabulary, and the rule is that an unknown value becomes a
 reported issue rather than a null that looks like "not stated".
@@ -41,7 +41,8 @@ class Vocabularies:
     """Cone *name* to id: {"05": 18, "5": 27, "6": 28}. Not manufacturer-scoped — a cone
     is a firing temperature, not a brand's word for one."""
     clay_bodies: dict[str, int]
-    """This manufacturer's clay code to id: {"16": 2, "32": 5} for AMACO."""
+    """This manufacturer's clay code to id: {"16": 2, "32": 5} for AMACO,
+    {"white": 10, "dark-brown": 12} for Mayco. Codes are the brand's own spelling."""
     surfaces: dict[str, int]
     opacities: dict[str, int]
     forms: dict[str, int]
@@ -100,10 +101,12 @@ class Normalizer:
             return None
         return self._vocab.cones.get(name.strip())
 
-    def clay_body_id(self, number: int | None) -> int | None:
-        if number is None:
+    def clay_body_id(self, code: str | None) -> int | None:
+        """Resolve a clay by the manufacturer's code. AMACO's `"16"`, Mayco's `"white"` —
+        never cast, because only one of the two brands has numbers to cast."""
+        if code is None:
             return None
-        return self._vocab.clay_bodies.get(str(number))
+        return self._vocab.clay_bodies.get(code)
 
     def coat_level_id(self, coat_level: CoatLevel | None) -> int | None:
         if coat_level is None:
@@ -114,7 +117,7 @@ class Normalizer:
         self,
         *,
         cone: str | None = None,
-        clay_body_number: int | None = None,
+        clay_body_code: str | None = None,
         form: FormKind | None = None,
         coat_level: CoatLevel | None = None,
     ) -> Resolution:
@@ -125,10 +128,10 @@ class Normalizer:
             if resolution.cone_id is None:
                 resolution.note("unknown_cone", cone)
 
-        if clay_body_number is not None:
-            resolution.clay_body_id = self.clay_body_id(clay_body_number)
+        if clay_body_code is not None:
+            resolution.clay_body_id = self.clay_body_id(clay_body_code)
             if resolution.clay_body_id is None:
-                resolution.note("unknown_clay_body", str(clay_body_number))
+                resolution.note("unknown_clay_body", clay_body_code)
 
         if form is not None:
             resolution.form_id = self._vocab.forms.get(form.value)

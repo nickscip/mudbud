@@ -25,6 +25,7 @@ from glaze_etl.core.models import CoatLevel, ManufacturerKey
 from glaze_etl.core.normalizer import load_vocabularies
 from glaze_etl.core.pipeline import normalizer_for
 from glaze_etl.sources import adapter_for
+from glaze_etl.sources.mayco.vocabulary import CLAY_BODIES as MAYCO_CLAY_BODIES
 
 DSN = os.environ.get("TEST_SUPABASE_DB_URL")
 needs_db = pytest.mark.skipif(not DSN, reason="TEST_SUPABASE_DB_URL not set")
@@ -86,6 +87,27 @@ def test_startup_accepts_a_vocabulary_that_publishes_them() -> None:
     normalizer = normalizer_for(conn, adapter_for("amaco"))
 
     assert normalizer.manufacturer is ManufacturerKey.AMACO
+
+
+def test_a_named_clay_resolves_through_the_scoped_vocabulary() -> None:
+    """The grammar emits Mayco's word, the vocabulary maps it to the seeded row. Nothing
+    in between casts to an int — that was the AMACO-shaped assumption F8a removes."""
+    conn = _StubConn(
+        {
+            "manufacturers": [("mayco", 2)],
+            "coat_levels": [(str(index), index) for index in range(1, 5)],
+            "clay_bodies": [("white", 41), ("dark-brown", 44)],
+        }
+    )
+    normalizer = normalizer_for(conn, adapter_for("mayco"))
+
+    resolved = normalizer.resolve_appearance(clay_body_code="dark-brown")
+    assert resolved.clay_body_id == 44
+    assert resolved.unresolved == []
+
+    unknown = normalizer.resolve_appearance(clay_body_code="wheat")
+    assert unknown.clay_body_id is None
+    assert unknown.unresolved == [("unknown_clay_body", "wheat")]
 
 
 def test_mayco_numeric_coat_order_requires_and_accepts_its_scoped_vocabulary() -> None:
@@ -157,10 +179,11 @@ def test_each_vocabulary_holds_only_its_owners_rows(conn: Connection) -> None:
     assert set(amaco_vocab.coat_levels) == {"light", "slightly_light", "slightly_heavy", "heavy"}
     assert set(mayco_vocab.coat_levels) == {"1", "2", "3", "4"}
 
-    # Mayco names its clays instead of numbering them, so it has no `clay_bodies` rows at
-    # all yet (F8a's remaining half). An empty dict is the honest answer, not AMACO's nine.
+    # Mayco names its clays instead of numbering them, so its codes are words
+    # (20260905000100). The key sets are disjoint by construction, not by luck.
     assert amaco_vocab.clay_bodies.keys() >= {"11", "16", "32"}
-    assert mayco_vocab.clay_bodies == {}
+    assert set(mayco_vocab.clay_bodies) == set(MAYCO_CLAY_BODIES)
+    assert not (set(amaco_vocab.clay_bodies) & set(mayco_vocab.clay_bodies))
 
     # Unscoped vocabularies stay whole for both: a cone is a temperature, not a brand's
     # word for one, and `manufacturers` is the map the scoping is done through.
