@@ -71,60 +71,65 @@ export async function addEntry(input: {
   // Every file is copied before any row is written. Interleaved, a copy that failed part way
   // through left the entry and the media rows already inserted behind it — and since the screen
   // now offers a retry rather than hanging, that half-written moment would have been duplicated
-  // by the second attempt. Copies made before the failure are removed; they belong to no row.
+  // by the second attempt.
+  //
+  // One catch covers both halves. A failure while copying leaves the copies made so far; a
+  // failure in the database afterwards — locked, full, a constraint — leaves every copy. Either
+  // way those files belong to no row, and a retry would lay a second set beside them, so they
+  // are removed before the caller sees the error.
   const persisted: { item: NewMedia; id: string; uri: string }[] = [];
   try {
     for (const item of input.media) {
       const { id, uri } = await persistMedia(item.uri, item.type);
       persisted.push({ item, id, uri });
     }
+
+    const firstPhotoUri = persisted.find((copy) => copy.item.type === "photo")?.uri ?? null;
+
+    const current = await db.query.pieces.findFirst({
+      where: eq(pieces.id, input.pieceId),
+      columns: { status: true },
+    });
+    const patch: Partial<typeof pieces.$inferInsert> = {
+      updatedAt: now,
+      status: advanceStatus(current?.status as PieceStatus | undefined, input.stage),
+    };
+    if (firstPhotoUri) patch.coverUri = firstPhotoUri;
+
+    // The entry, its media and the piece move together: a moment exists whole or not at all.
+    db.transaction((tx) => {
+      tx.insert(entries)
+        .values({
+          id: entryId,
+          pieceId: input.pieceId,
+          stage: input.stage,
+          note: input.note?.trim() || null,
+          createdAt: now,
+          orderIndex: now,
+        })
+        .run();
+
+      for (const { item, id, uri } of persisted) {
+        tx.insert(media)
+          .values({
+            id,
+            entryId,
+            type: item.type,
+            localUri: uri,
+            width: item.width ?? null,
+            height: item.height ?? null,
+            durationMs: item.durationMs ?? null,
+            createdAt: now,
+          })
+          .run();
+      }
+
+      tx.update(pieces).set(patch).where(eq(pieces.id, input.pieceId)).run();
+    });
   } catch (error) {
     await Promise.all(persisted.map((copy) => deleteMediaFile(copy.uri)));
     throw error;
   }
-
-  const firstPhotoUri = persisted.find((copy) => copy.item.type === "photo")?.uri ?? null;
-
-  const current = await db.query.pieces.findFirst({
-    where: eq(pieces.id, input.pieceId),
-    columns: { status: true },
-  });
-  const patch: Partial<typeof pieces.$inferInsert> = {
-    updatedAt: now,
-    status: advanceStatus(current?.status as PieceStatus | undefined, input.stage),
-  };
-  if (firstPhotoUri) patch.coverUri = firstPhotoUri;
-
-  // The entry, its media and the piece move together: a moment exists whole or not at all.
-  db.transaction((tx) => {
-    tx.insert(entries)
-      .values({
-        id: entryId,
-        pieceId: input.pieceId,
-        stage: input.stage,
-        note: input.note?.trim() || null,
-        createdAt: now,
-        orderIndex: now,
-      })
-      .run();
-
-    for (const { item, id, uri } of persisted) {
-      tx.insert(media)
-        .values({
-          id,
-          entryId,
-          type: item.type,
-          localUri: uri,
-          width: item.width ?? null,
-          height: item.height ?? null,
-          durationMs: item.durationMs ?? null,
-          createdAt: now,
-        })
-        .run();
-    }
-
-    tx.update(pieces).set(patch).where(eq(pieces.id, input.pieceId)).run();
-  });
 
   return entryId;
 }

@@ -25,6 +25,7 @@ import {
   setGlazeMarkState,
   toggleGlazeFavorite,
 } from "@/db/repo";
+import * as idModule from "@/lib/id";
 import { deleteMediaFile, persistMedia } from "@/lib/media";
 import { __raw } from "expo-sqlite";
 
@@ -505,6 +506,39 @@ describe("addEntry when a media copy fails", () => {
 
     expect(await stateOf(pieceId)).toEqual(before);
     // The two files copied before the failure belong to no row, so they are cleaned up.
+    expect(deleteMediaFile).toHaveBeenCalledWith("file:///a.jpg#copied");
+    expect(deleteMediaFile).toHaveBeenCalledWith("file:///b.jpg#copied");
+    expect(deleteMediaFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("removes every copy when the database write fails after all copies succeeded", async () => {
+    // The other half of the atomicity story: the files are all on disk and it is SQLite that
+    // refuses — locked, full, a constraint. Reusing an existing entry id makes the transaction's
+    // first insert violate the primary key, which is a real failure from the real database
+    // rather than a mocked throw.
+    const pieceId = await seedPiece();
+    const existing = await addEntry({ pieceId, stage: "throwing", media: [] });
+    now = T0 + 2000;
+    const before = await stateOf(pieceId);
+
+    persistMediaMock
+      .mockImplementationOnce(async (uri) => ({ id: "m-a", uri: `${uri}#copied` }))
+      .mockImplementationOnce(async (uri) => ({ id: "m-b", uri: `${uri}#copied` }));
+    const collide = jest.spyOn(idModule, "createId").mockReturnValueOnce(existing);
+
+    try {
+      await expect(
+        addEntry({
+          pieceId,
+          stage: "bisque",
+          media: [photo("file:///a.jpg"), photo("file:///b.jpg")],
+        })
+      ).rejects.toThrow();
+    } finally {
+      collide.mockRestore();
+    }
+
+    expect(await stateOf(pieceId)).toEqual(before);
     expect(deleteMediaFile).toHaveBeenCalledWith("file:///a.jpg#copied");
     expect(deleteMediaFile).toHaveBeenCalledWith("file:///b.jpg#copied");
     expect(deleteMediaFile).toHaveBeenCalledTimes(2);
