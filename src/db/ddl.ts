@@ -7,7 +7,7 @@
  * on a real device means finding a phone that installed the app before the change. A plain
  * SQLite driver can exercise these strings in milliseconds instead.
  *
- * See `scripts/test-device-db.mjs`, which runs them against `node:sqlite` in CI.
+ * See `test/db/ddl.test.ts`, which runs them against `node:sqlite` in CI.
  */
 
 /**

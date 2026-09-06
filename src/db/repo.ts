@@ -68,53 +68,89 @@ export async function addEntry(input: {
   const now = Date.now();
   const entryId = createId();
 
-  await db.insert(entries).values({
-    id: entryId,
-    pieceId: input.pieceId,
-    stage: input.stage,
-    note: input.note?.trim() || null,
-    createdAt: now,
-    orderIndex: now,
-  });
+  // Every file is copied before any row is written. Interleaved, a copy that failed part way
+  // through left the entry and the media rows already inserted behind it — and since the screen
+  // now offers a retry rather than hanging, that half-written moment would have been duplicated
+  // by the second attempt.
+  //
+  // One catch covers both halves. A failure while copying leaves the copies made so far; a
+  // failure in the database afterwards — locked, full, a constraint — leaves every copy. Either
+  // way those files belong to no row, and a retry would lay a second set beside them, so they
+  // are removed before the caller sees the error.
+  const persisted: { item: NewMedia; id: string; uri: string }[] = [];
+  try {
+    for (const item of input.media) {
+      const { id, uri } = await persistMedia(item.uri, item.type);
+      persisted.push({ item, id, uri });
+    }
 
-  let firstPhotoUri: string | null = null;
-  for (const m of input.media) {
-    const persisted = await persistMedia(m.uri, m.type);
-    if (!firstPhotoUri && m.type === "photo") firstPhotoUri = persisted.uri;
-    await db.insert(media).values({
-      id: persisted.id,
-      entryId,
-      type: m.type,
-      localUri: persisted.uri,
-      width: m.width ?? null,
-      height: m.height ?? null,
-      durationMs: m.durationMs ?? null,
-      createdAt: now,
+    const firstPhotoUri = persisted.find((copy) => copy.item.type === "photo")?.uri ?? null;
+
+    const current = await db.query.pieces.findFirst({
+      where: eq(pieces.id, input.pieceId),
+      columns: { status: true },
     });
-  }
+    const patch: Partial<typeof pieces.$inferInsert> = {
+      updatedAt: now,
+      status: advanceStatus(current?.status as PieceStatus | undefined, input.stage),
+    };
+    if (firstPhotoUri) patch.coverUri = firstPhotoUri;
 
-  const current = await db.query.pieces.findFirst({
-    where: eq(pieces.id, input.pieceId),
-    columns: { status: true },
-  });
-  const patch: Partial<typeof pieces.$inferInsert> = {
-    updatedAt: now,
-    status: advanceStatus(current?.status as PieceStatus | undefined, input.stage),
-  };
-  if (firstPhotoUri) patch.coverUri = firstPhotoUri;
-  await db.update(pieces).set(patch).where(eq(pieces.id, input.pieceId));
+    // The entry, its media and the piece move together: a moment exists whole or not at all.
+    db.transaction((tx) => {
+      tx.insert(entries)
+        .values({
+          id: entryId,
+          pieceId: input.pieceId,
+          stage: input.stage,
+          note: input.note?.trim() || null,
+          createdAt: now,
+          orderIndex: now,
+        })
+        .run();
+
+      for (const { item, id, uri } of persisted) {
+        tx.insert(media)
+          .values({
+            id,
+            entryId,
+            type: item.type,
+            localUri: uri,
+            width: item.width ?? null,
+            height: item.height ?? null,
+            durationMs: item.durationMs ?? null,
+            createdAt: now,
+          })
+          .run();
+      }
+
+      tx.update(pieces).set(patch).where(eq(pieces.id, input.pieceId)).run();
+    });
+  } catch (error) {
+    await Promise.all(persisted.map((copy) => deleteMediaFile(copy.uri)));
+    throw error;
+  }
 
   return entryId;
 }
+
+// Both deletions take the rows out in one transaction and only then touch the disk. The old
+// order — files first, then several independent deletes — could leave a surviving row pointing
+// at a file that was already gone, which shows as a broken thumbnail the app has no way to
+// repair. An orphaned file is the better failure: it wastes space and nothing else.
 
 export async function deleteEntry(entryId: string, pieceId: string): Promise<void> {
   const rows = await db.query.media.findMany({
     where: eq(media.entryId, entryId),
   });
+
+  db.transaction((tx) => {
+    tx.delete(media).where(eq(media.entryId, entryId)).run();
+    tx.delete(entries).where(eq(entries.id, entryId)).run();
+    tx.update(pieces).set({ updatedAt: Date.now() }).where(eq(pieces.id, pieceId)).run();
+  });
+
   await Promise.all(rows.map((m) => deleteMediaFile(m.localUri)));
-  await db.delete(media).where(eq(media.entryId, entryId));
-  await db.delete(entries).where(eq(entries.id, entryId));
-  await db.update(pieces).set({ updatedAt: Date.now() }).where(eq(pieces.id, pieceId));
 }
 
 export async function deletePiece(id: string): Promise<void> {
@@ -123,14 +159,16 @@ export async function deletePiece(id: string): Promise<void> {
     with: { media: true },
   });
   const entryIds = rows.map((e) => e.id);
-  await Promise.all(
-    rows.flatMap((e) => e.media.map((m) => deleteMediaFile(m.localUri)))
-  );
-  if (entryIds.length > 0) {
-    await db.delete(media).where(inArray(media.entryId, entryIds));
-  }
-  await db.delete(entries).where(eq(entries.pieceId, id));
-  await db.delete(pieces).where(eq(pieces.id, id));
+
+  db.transaction((tx) => {
+    if (entryIds.length > 0) {
+      tx.delete(media).where(inArray(media.entryId, entryIds)).run();
+    }
+    tx.delete(entries).where(eq(entries.pieceId, id)).run();
+    tx.delete(pieces).where(eq(pieces.id, id)).run();
+  });
+
+  await Promise.all(rows.flatMap((e) => e.media.map((m) => deleteMediaFile(m.localUri))));
 }
 
 const STATUS_RANK: Record<PieceStatus, number> = {

@@ -71,8 +71,18 @@ The local device schema (`src/db/`) has its own check, because its upgrade path 
 on a phone that installed the app before the change:
 
 ```
-node --experimental-strip-types scripts/test-device-db.mjs
+npx jest test/db
 ```
+
+That is part of the Jest suite. `npm test` runs it without coverage — the fast loop — and
+`npm run test:coverage` is the gated form CI runs, failing below 90% of statements, lines,
+functions and branches. It needs **Node >= 22.13** — `.nvmrc` pins it — because
+`__mocks__/expo-sqlite.ts` puts a real `node:sqlite` behind drizzle so `src/db/` and every
+`useLiveQuery` screen run their actual SQL off-device.
+
+The ETL's gate is `etl/check_coverage.py`, which reads coverage.py's JSON and holds statements
+and branches to 90% *each*. `--cov-fail-under` alone would not: it compares one blended total,
+which a suite with 85% branch coverage can still clear.
 
 Both run automatically before a push that touches `supabase/` or `src/db/`, once you have
 run `scripts/install-hooks.sh`. CI runs the same checks and `main` requires them to

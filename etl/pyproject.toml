@@ -26,6 +26,7 @@ glaze-etl = "glaze_etl.cli:app"
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
+    "pytest-cov>=6.0",
     "ruff>=0.9",
     "mypy>=1.14",
     "types-requests",
@@ -65,3 +66,24 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 filterwarnings = ["error"]
+
+[tool.coverage.run]
+source = ["glaze_etl"]
+# Branches count toward the gate like every other metric. A lines-only number hides exactly
+# the refusal paths this codebase is built out of — every `if not X: raise typer.Exit(1)` reads
+# as covered the moment the happy path runs through it.
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = [
+    'if __name__ == "__main__":',
+    # Protocol method bodies (blob_store.BlobStore, store.SnapshotStore) and abstract
+    # declarations: signatures with no behaviour to exercise.
+    '^\s*\.\.\.$',
+    'if TYPE_CHECKING:',
+    '@(abc\.)?abstractmethod',
+]
+# No fail_under here, and no --cov in addopts, on purpose. A local run without
+# TEST_SUPABASE_DB_URL skips the Postgres-backed tests that own ~125 statements, so a gate
+# configured here would fail on a green local suite. CI passes --cov-fail-under=90 instead.
