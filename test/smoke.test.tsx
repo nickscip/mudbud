@@ -12,7 +12,7 @@ import React from "react";
 import { createId } from "@/lib/id";
 import { PressableScale } from "@/components/PressableScale";
 import { PieceCard } from "@/components/PieceCard";
-import { openDatabaseSync, __raw, __reset } from "expo-sqlite";
+import { addDatabaseChangeListener, openDatabaseSync, __raw, __reset } from "expo-sqlite";
 
 describe("test harness", () => {
   it("resolves the @/ alias through tsconfig paths", () => {
@@ -82,6 +82,25 @@ describe("test harness", () => {
 
     expect(() => db.execSync("insert into t (name) values (null)")).toThrow();
     expect(__raw("smoke.db").prepare("select count(*) as n from t").get()).toEqual({ n: 1 });
+  });
+
+  it("emits change events only for a database opened with enableChangeListener", async () => {
+    // The real option defaults to off, and every live-update test in this suite rides on
+    // client.ts turning it on. A double that always emitted would hide that option being dropped.
+    __reset();
+    const seen: string[] = [];
+    addDatabaseChangeListener((event) => seen.push(`${event.databaseName}:${event.tableName}`));
+
+    const silent = openDatabaseSync("silent.db");
+    silent.execSync("create table quiet (id integer primary key)");
+    silent.execSync("insert into quiet (id) values (1)");
+
+    const live = openDatabaseSync("live.db", { enableChangeListener: true });
+    live.execSync("create table loud (id integer primary key)");
+    live.prepareSync("insert into loud (id) values (?)").executeSync([1]);
+
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    expect(seen).toEqual(["main:loud"]);
   });
 
   it("rolls a failed transaction back", () => {

@@ -53,8 +53,12 @@ failed=0
 
 if git diff --name-only $range -- src/db | grep -q .; then
   echo "pre-push: device database"
-  if ! npx jest test/db --silent >/dev/null 2>&1; then
-    npx jest test/db || true
+  # Through npm, not npx: with node_modules absent, `npx jest` fetches whatever Jest is current
+  # and runs *that* — observed pulling 30.x against a lockfile pinning 29.7 — and in a hook's
+  # non-interactive shell the download prompt is auto-accepted. `npm test` resolves the local
+  # binary only, and fails closed when it is not installed.
+  if ! npm test -- test/db --silent >/dev/null 2>&1; then
+    npm test -- test/db || true
     failed=1
   else
     echo "  ok"

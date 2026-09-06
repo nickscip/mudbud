@@ -99,7 +99,8 @@ npx expo export --platform ios   # full bundle smoke test
 # Before applying a migration anywhere: replays the whole history into a throwaway
 # database and asserts the RPC contract, the anon grants and the query plans.
 scripts/verify-schema.sh
-npm test                         # Jest over src/, gated at 90% coverage
+npm run test:coverage            # Jest over src/ with the 90% gate CI enforces
+npm test                         # the same tests, no coverage — the fast loop
 npm test -- test/db              # just the local SQLite schema and upgrade path
 
 cd etl

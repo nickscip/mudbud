@@ -39,10 +39,10 @@ class FakeStatement {
   private readonly statement: ReturnType<InstanceType<typeof DatabaseSync>["prepare"]>;
 
   constructor(
-    database: InstanceType<typeof DatabaseSync>,
+    private readonly owner: FakeDatabase,
     private readonly sql: string
   ) {
-    this.statement = database.prepare(sql);
+    this.statement = owner.raw.prepare(sql);
   }
 
   /** drizzle reads `changes`/`lastInsertRowId` for writes and the getters for reads. */
@@ -57,7 +57,7 @@ class FakeStatement {
       };
     }
     const result = this.statement.run(...bound);
-    notify(this.sql);
+    this.owner.changed(this.sql);
     return {
       changes: Number(result.changes),
       lastInsertRowId: Number(result.lastInsertRowid),
@@ -78,13 +78,25 @@ class FakeStatement {
 class FakeDatabase {
   readonly raw = new DatabaseSync(":memory:");
 
+  /**
+   * Whether writes reach `addDatabaseChangeListener`. Mirrors the real option, which defaults
+   * to off: `useLiveQuery` only works because `client.ts` opens with it on, and a double that
+   * always emitted would keep every live-update test green if that option were ever dropped —
+   * while on the device nothing re-rendered.
+   */
+  constructor(private readonly emitsChanges: boolean) {}
+
+  changed(sql: string): void {
+    if (this.emitsChanges) notify(sql);
+  }
+
   prepareSync(sql: string) {
-    return new FakeStatement(this.raw, sql);
+    return new FakeStatement(this, sql);
   }
 
   execSync(sql: string): void {
     this.raw.exec(sql);
-    notify(sql);
+    this.changed(sql);
   }
 
   getFirstSync<T>(sql: string, ...params: unknown[]): T | null {
@@ -111,10 +123,13 @@ class FakeDatabase {
   }
 }
 
-export function openDatabaseSync(databaseName: string): FakeDatabase {
+export function openDatabaseSync(
+  databaseName: string,
+  options?: { enableChangeListener?: boolean }
+): FakeDatabase {
   let handle = handles.get(databaseName);
   if (!handle) {
-    handle = new FakeDatabase();
+    handle = new FakeDatabase(options?.enableChangeListener === true);
     handles.set(databaseName, handle);
   }
   return handle;
