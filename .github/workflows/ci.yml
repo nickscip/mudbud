@@ -253,7 +253,12 @@ jobs:
         run: scripts/verify-schema.sh
 
   app:
-    name: App — typecheck, tests, bundle
+    # The name is a *required status check* on main, so it is left exactly as it was even though
+    # the middle step now runs the whole Jest suite rather than only the device database.
+    # Renaming it would retire the required check under its old name: it would never report,
+    # sit pending forever, and no pull request could merge — the same failure the `changes`
+    # job's comment describes. Rename it and the branch ruleset together, or not at all.
+    name: App — typecheck, device DB, bundle
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: changes
