@@ -67,3 +67,4 @@ etl/.coverage
 
 # Jest coverage output
 coverage/
+etl/coverage.json

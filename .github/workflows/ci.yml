@@ -210,11 +210,16 @@ jobs:
         env:
           TEST_SUPABASE_DB_URL: postgres://postgres:postgres@localhost:5432/postgres
           TEST_PGBOUNCER_DB_URL: postgres://postgres:postgres@127.0.0.1:6433/postgres
-        # --cov-fail-under lives here rather than in pyproject: a local run without the DSN above
-        # skips the Postgres-backed tests, so a threshold in the config would fail a green
-        # developer suite. Branch coverage is on (see [tool.coverage.run]), which is what stops a
-        # happy path from reading as though it had exercised every refusal it walked past.
-        run: uv run pytest -q --cov=glaze_etl --cov-report=term-missing --cov-fail-under=90
+        # The gate is the step below, not --cov-fail-under: that flag compares coverage.py's
+        # single blended total, which a suite with 85% branch coverage can still clear. Branch
+        # coverage is on (see [tool.coverage.run]) precisely so a happy path cannot read as though
+        # it had exercised every refusal it walked past, and check_coverage.py holds statements
+        # and branches to the floor separately. It lives in CI rather than pyproject because a
+        # local run without the DSN above skips the Postgres-backed tests.
+        run: uv run pytest -q --cov=glaze_etl --cov-report=term-missing --cov-report=json
+
+      - name: Coverage gate — statements and branches each ≥ 90%
+        run: uv run python check_coverage.py 90
 
   schema:
     name: Schema — migrations and SQL contract
