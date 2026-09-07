@@ -74,19 +74,34 @@ the text field now owns the first and the filter modal owns the second.
   Surface section stays hidden rather than turning a tap into a guaranteed empty result. It will
   appear without another UI change once the ETL populates `glazes.surface_id`.
   "Type" remains ambiguous — see Open decisions.
-- **A4 · Filter set worth the name** — **partial: wiring half done**, in two halves.
+- **A4 · Filter set worth the name** — **done**, in two halves.
   - *Wiring only* — **done**: line, surface, opacity, manufacturer, all 36 ordered cones as a
     real range instead of four presets, and `clayBodyIds`. The app sends the existing RPC
     parameters, multi-selects OR within a facet and ANDs across facets, and prunes hidden
     line/clay selections when a manufacturer choice makes them impossible. Vocabulary choices
     are count-backed, so the nine seeded clay bodies become the three that actually have
     appearance evidence rather than six dead ends.
-  - *Needs new RPC parameters*: price range (`price_min` / `price_max`), in-stock
-    (`availability`), `is_dipping` / `is_brushing`, and the fuller safety set
-    (`dinnerware_safe`, `food_safe_under_glaze`, `lead_free`, `prop65`). All are columns on
-    `glazes`; none is a filter yet. Note the lesson in that migration's header comment:
-    **add a parameter by dropping and recreating, not by overloading** — a second overload
-    makes Postgres refuse to choose and breaks every existing call.
+  - *New RPC parameters* — **done** (`20260906000100_filter_price_stock_application_safety.sql`,
+    **on hosted 2026-09-06** via a `staging` dispatch of `deploy-schema.yml`, dry run first and
+    the ledger agreeing at 24 files after; the app change merged *after* that, the order F8 got
+    wrong). Eight parameters appended after `p_code_manufacturers`, every one defaulted, so the
+    13-argument call an old bundle sends resolves to the same function — asserted in
+    `search_smoke.sql`. Decisions worth knowing: **price bounds `price_min` only**, the "From $X"
+    the card shows, so the card and the filter tell one story and "from $50" does not sweep in
+    every glaze with an expensive gallon; **in stock is a positive match on `'InStock'`**, the one
+    value both parsers write, so `OutOfStock` and E7's `Unavailable` both fail it;
+    **`p_application text[]`** reads the two capability columns as one OR'd facet like every other
+    multi-select; the safety flags match only a stated true; and **`p_prop65` is inverted in
+    use** — the parsers record only the warning's presence, so the column is never `false` and
+    "no Prop 65 warning" coalesces null to false or it could return nothing. The sheet gained
+    Price (two typed bounds, swapped on Apply if crossed), Availability, Application and a fuller
+    Safety row. Not count-backed, deliberately, like `foodSafeOnly` before it — but measured on
+    hosted, `lead_free` is true on **zero** rows: the loader writes it and no parser sets it, so
+    that chip is an honest empty answer until a source publishes the claim. `is_brushing` is
+    worse and review caught it: **nothing in the ETL produces it** — no `Badges` field, no loader
+    column, no AMACO icon — so the RPC accepts `'brushing'` in `p_application` but the sheet offers
+    only Dipping. Add the chip when the producer exists; make the flags count-backed if
+    `lead_free` stays at zero.
 - **A5 · Filter UX** — **partial**. The mixed horizontal rail is gone; one active-facet-count
   chip opens a React Native page-sheet modal with draft/Apply semantics, clear-all, labelled
   per-facet rows, and state that survives navigating into a glaze and back. The 43-value Line

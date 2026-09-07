@@ -6,10 +6,13 @@ import { Ionicons } from "@expo/vector-icons";
 import { MARK_FILTERS, MARK_FILTER_KEYS, type MarkFilterKey } from "@/lib/markFilters";
 import {
   glazeLineLabel,
+  orderedPriceRange,
+  parsePriceBound,
   pruneManufacturerScopedFilters,
   toggleFilterId,
   withConeFrom,
   withConeTo,
+  type GlazeApplication,
   type GlazeFilterOptions,
   type GlazeFilters,
   type ManufacturerScopedOption,
@@ -39,8 +42,37 @@ const copyFilters = (filters: GlazeFilters): GlazeFilters => ({
   surfaceIds: filters.surfaceIds?.slice(),
   opacityIds: filters.opacityIds?.slice(),
   clayBodyIds: filters.clayBodyIds?.slice(),
+  applications: filters.applications?.slice(),
   // Marks are derived from the local mark filter on the search screen, never edited as refs here.
   marks: undefined,
+});
+
+/** The on/off facets, each one chip. */
+type FlagKey =
+  | "inStockOnly"
+  | "foodSafeOnly"
+  | "dinnerwareSafeOnly"
+  | "foodSafeUnderGlazeOnly"
+  | "leadFreeOnly"
+  | "noProp65";
+
+const SAFETY_FLAGS: ReadonlyArray<[FlagKey, string]> = [
+  ["foodSafeOnly", "Food safe"],
+  ["dinnerwareSafeOnly", "Dinnerware safe"],
+  ["foodSafeUnderGlazeOnly", "Food safe under glaze"],
+  ["leadFreeOnly", "Lead free"],
+  ["noProp65", "No Prop 65 warning"],
+];
+
+// The RPC also accepts "brushing", but nothing in the ETL writes `glazes.is_brushing` — no model
+// field, no loader column, no source icon — so offering it would be a guaranteed empty tap. Add
+// the chip when the producer exists; the wire contract already carries it.
+const APPLICATIONS: ReadonlyArray<[GlazeApplication, string]> = [["dipping", "Dipping"]];
+
+/** The typed text behind the two price bounds; kept as strings so "12." survives a keystroke. */
+const priceText = (filters: GlazeFilters) => ({
+  min: filters.priceMin?.toString() ?? "",
+  max: filters.priceMax?.toString() ?? "",
 });
 
 /** Expo Go-safe filter sheet with draft state, plus a focused picker for the large line facet. */
@@ -59,6 +91,7 @@ export function GlazeFilterModal({
   const [draftMarkFilter, setDraftMarkFilter] = useState<MarkFilterKey | null>(markFilter);
   const [editingLines, setEditingLines] = useState(false);
   const [lineQuery, setLineQuery] = useState("");
+  const [price, setPrice] = useState(() => priceText(filters));
 
   const selectedManufacturers = draft.manufacturerIds;
   const visibleLines = useMemo(
@@ -90,8 +123,20 @@ export function GlazeFilterModal({
     });
   };
 
+  const toggleFlag = (key: FlagKey) =>
+    setDraft((current) => ({ ...current, [key]: current[key] ? undefined : true }));
+
+  const setPriceBound = (bound: "min" | "max", text: string) => {
+    setPrice((current) => ({ ...current, [bound]: text }));
+    setDraft((current) => ({
+      ...current,
+      [bound === "min" ? "priceMin" : "priceMax"]: parsePriceBound(text),
+    }));
+  };
+
   const clear = () => {
     setDraft({});
+    setPrice(priceText({}));
     setDraftMarkFilter(null);
   };
 
@@ -285,17 +330,63 @@ export function GlazeFilterModal({
               </View>
             ) : null}
 
-            <FilterSection title="Safety">
+            <FilterSection
+              title="Price"
+              hint="Bounds the cheapest size, the price each card shows."
+            >
+              <View className="flex-row gap-3">
+                <PriceInput
+                  label="Min"
+                  accessibilityLabel="Minimum price"
+                  value={price.min}
+                  onChangeText={(text) => setPriceBound("min", text)}
+                />
+                <PriceInput
+                  label="Max"
+                  accessibilityLabel="Maximum price"
+                  value={price.max}
+                  onChangeText={(text) => setPriceBound("max", text)}
+                />
+              </View>
+            </FilterSection>
+
+            <FilterSection title="Availability">
               <OptionChip
-                label="Food safe"
-                selected={Boolean(draft.foodSafeOnly)}
-                onPress={() =>
-                  setDraft((current) => ({
-                    ...current,
-                    foodSafeOnly: current.foodSafeOnly ? undefined : true,
-                  }))
-                }
+                label="In stock"
+                selected={Boolean(draft.inStockOnly)}
+                onPress={() => toggleFlag("inStockOnly")}
               />
+            </FilterSection>
+
+            <FilterSection title="Application" hint="What the manufacturer says the glaze is for.">
+              <View className="flex-row flex-wrap">
+                {APPLICATIONS.map(([key, label]) => (
+                  <OptionChip
+                    key={key}
+                    label={label}
+                    selected={draft.applications?.includes(key) ?? false}
+                    onPress={() =>
+                      setDraft((current) => ({
+                        ...current,
+                        applications: toggleFilterId(current.applications, key),
+                      }))
+                    }
+                  />
+                ))}
+              </View>
+            </FilterSection>
+
+            <FilterSection title="Safety" hint="Only glazes the manufacturer states this about.">
+              <View className="flex-row flex-wrap">
+                {SAFETY_FLAGS.map(([key, label]) => (
+                  <OptionChip
+                    key={key}
+                    label={label}
+                    selected={Boolean(draft[key])}
+                    onPress={() => toggleFlag(key)}
+                  />
+                ))}
+              </View>
             </FilterSection>
 
             <FilterSection title="Your glazes" hint="Saved only on this device.">
@@ -329,7 +420,7 @@ export function GlazeFilterModal({
               <View className="flex-1">
                 <Button
                   label="Apply filters"
-                  onPress={() => onApply(draft, draftMarkFilter)}
+                  onPress={() => onApply(orderedPriceRange(draft), draftMarkFilter)}
                 />
               </View>
             </>
@@ -524,6 +615,37 @@ function FilterSection({
         <View className="h-3" />
       )}
       {children}
+    </View>
+  );
+}
+
+function PriceInput({
+  label,
+  accessibilityLabel,
+  value,
+  onChangeText,
+}: {
+  label: string;
+  accessibilityLabel: string;
+  value: string;
+  onChangeText: (text: string) => void;
+}) {
+  return (
+    <View className="flex-1 flex-row items-center rounded-2xl border border-stone-200 bg-stone-50 px-3">
+      <Txt variant="label" className="text-xs uppercase tracking-wide">
+        {label} $
+      </Txt>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder="Any"
+        placeholderTextColor={colors.stone[400]}
+        keyboardType="decimal-pad"
+        returnKeyType="done"
+        accessibilityLabel={accessibilityLabel}
+        className="min-h-12 flex-1 px-2 text-base text-stone-800"
+        style={{ fontFamily: fonts.body }}
+      />
     </View>
   );
 }

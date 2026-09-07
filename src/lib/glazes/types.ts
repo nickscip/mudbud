@@ -107,6 +107,12 @@ export type GlazeAppearance = {
   image_height: number | null;
 };
 
+/**
+ * The values `search_glazes` accepts in `p_application`. The sheet offers only `dipping` today:
+ * the ETL never writes `is_brushing`, so `brushing` is a wire value with no producer behind it.
+ */
+export type GlazeApplication = "dipping" | "brushing";
+
 export type GlazeFilters = {
   manufacturerIds?: number[];
   lineIds?: number[];
@@ -116,6 +122,20 @@ export type GlazeFilters = {
   opacityIds?: number[];
   foodSafeOnly?: boolean;
   clayBodyIds?: number[];
+  /**
+   * Bounds on the cheapest size — the "From $X" the card shows — so the filter and the card tell
+   * one story. Whole currency units; a glaze with no price is excluded once either bound is set.
+   */
+  priceMin?: number;
+  priceMax?: number;
+  inStockOnly?: boolean;
+  /** Capability flags read as one facet: choosing both widens, like every other multi-select. */
+  applications?: GlazeApplication[];
+  dinnerwareSafeOnly?: boolean;
+  foodSafeUnderGlazeOnly?: boolean;
+  leadFreeOnly?: boolean;
+  /** The parsers record only the warning's presence, so "no warning" is the useful polarity. */
+  noProp65?: boolean;
   /**
    * Restrict to these glazes. Used for the Wishlist / Owned / Favourites filters, whose source
    * of truth is the device's own SQLite — filtering the already-fetched page instead would

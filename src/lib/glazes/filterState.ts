@@ -1,12 +1,13 @@
 import type {
   ClayBodyOption,
   FilterOption,
+  GlazeApplication,
   GlazeFilterOptions,
   GlazeFilters,
   ManufacturerScopedOption,
 } from "./types";
 
-/** Named arguments for the existing 13-parameter `search_glazes` RPC. */
+/** Named arguments for the 21-parameter `search_glazes` RPC (20260906000100). */
 export type SearchGlazesParams = {
   q: string | null;
   p_manufacturer: number[] | null;
@@ -21,10 +22,20 @@ export type SearchGlazesParams = {
   p_code_manufacturers: string[] | null;
   p_limit: number;
   p_offset: number;
+  p_price_min: number | null;
+  p_price_max: number | null;
+  p_in_stock: true | null;
+  p_application: GlazeApplication[] | null;
+  p_dinnerware_safe: true | null;
+  p_food_safe_under_glaze: true | null;
+  p_lead_free: true | null;
+  /** Inverted on purpose: the only useful Prop 65 filter is "no warning". */
+  p_prop65: false | null;
 };
 
-const populated = (ids: number[] | undefined): number[] | null =>
-  ids?.length ? ids : null;
+const populated = <T>(ids: T[] | undefined): T[] | null => (ids?.length ? ids : null);
+
+const flag = (on: boolean | undefined): true | null => (on ? true : null);
 
 /**
  * Manufacturer feeds sometimes use a descriptive slug as the line's "code". Repeating that
@@ -53,7 +64,7 @@ export function buildSearchGlazesParams(
     p_cone_to: filters.coneTo ?? null,
     p_surface: populated(filters.surfaceIds),
     p_opacity: populated(filters.opacityIds),
-    p_food_safe: filters.foodSafeOnly ? true : null,
+    p_food_safe: flag(filters.foodSafeOnly),
     p_clay_body: populated(filters.clayBodyIds),
     // These arrays are unnested in parallel by Postgres. Building both from the same refs is
     // what keeps a code from accidentally matching another manufacturer's glaze.
@@ -63,7 +74,31 @@ export function buildSearchGlazesParams(
       : null,
     p_limit: limit,
     p_offset: offset,
+    p_price_min: filters.priceMin ?? null,
+    p_price_max: filters.priceMax ?? null,
+    p_in_stock: flag(filters.inStockOnly),
+    p_application: populated(filters.applications),
+    p_dinnerware_safe: flag(filters.dinnerwareSafeOnly),
+    p_food_safe_under_glaze: flag(filters.foodSafeUnderGlazeOnly),
+    p_lead_free: flag(filters.leadFreeOnly),
+    p_prop65: filters.noProp65 ? false : null,
   };
+}
+
+/**
+ * Read a typed price bound. Blank is unset; anything that is not a non-negative number is also
+ * unset rather than sent, so a stray character never turns into a filter the reader cannot see.
+ */
+export function parsePriceBound(text: string): number | undefined {
+  const value = Number(text.trim());
+  return text.trim() !== "" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/** Two free-typed bounds can cross; swap rather than send a range that matches nothing. */
+export function orderedPriceRange(filters: GlazeFilters): GlazeFilters {
+  const { priceMin, priceMax } = filters;
+  if (priceMin === undefined || priceMax === undefined || priceMin <= priceMax) return filters;
+  return { ...filters, priceMin: priceMax, priceMax: priceMin };
 }
 
 /** Build one visible page plus the extra row that proves another page exists. */
@@ -77,10 +112,7 @@ export function buildSearchPageParams(
 }
 
 /** Toggle one id without leaving empty arrays that the RPC would interpret ambiguously. */
-export function toggleFilterId(
-  ids: number[] | undefined,
-  id: number
-): number[] | undefined {
+export function toggleFilterId<T>(ids: T[] | undefined, id: T): T[] | undefined {
   const next = ids?.includes(id)
     ? ids.filter((candidate) => candidate !== id)
     : [...(ids ?? []), id];
@@ -154,8 +186,17 @@ export function activeGlazeFilterCount(
     filters.coneFrom !== undefined || filters.coneTo !== undefined,
     Boolean(filters.surfaceIds?.length),
     Boolean(filters.opacityIds?.length),
-    Boolean(filters.foodSafeOnly),
+    Boolean(
+      filters.foodSafeOnly ||
+        filters.dinnerwareSafeOnly ||
+        filters.foodSafeUnderGlazeOnly ||
+        filters.leadFreeOnly ||
+        filters.noProp65
+    ),
     Boolean(filters.clayBodyIds?.length),
+    filters.priceMin !== undefined || filters.priceMax !== undefined,
+    Boolean(filters.inStockOnly),
+    Boolean(filters.applications?.length),
     markFilterActive,
   ].filter(Boolean).length;
 }

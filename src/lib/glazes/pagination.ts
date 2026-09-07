@@ -104,6 +104,14 @@ export function searchRequestKey(
     opacityIds: sortedNumbers(filters.opacityIds),
     foodSafeOnly: filters.foodSafeOnly === true,
     clayBodyIds: sortedNumbers(filters.clayBodyIds),
+    priceMin: filters.priceMin ?? null,
+    priceMax: filters.priceMax ?? null,
+    inStockOnly: filters.inStockOnly === true,
+    applications: filters.applications?.length ? [...filters.applications].sort() : null,
+    dinnerwareSafeOnly: filters.dinnerwareSafeOnly === true,
+    foodSafeUnderGlazeOnly: filters.foodSafeUnderGlazeOnly === true,
+    leadFreeOnly: filters.leadFreeOnly === true,
+    noProp65: filters.noProp65 === true,
     marks,
   });
 }

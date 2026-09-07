@@ -216,6 +216,14 @@ describe("searchRequestKey", () => {
       opacityIds: null,
       foodSafeOnly: false,
       clayBodyIds: null,
+      priceMin: null,
+      priceMax: null,
+      inStockOnly: false,
+      applications: null,
+      dinnerwareSafeOnly: false,
+      foodSafeUnderGlazeOnly: false,
+      leadFreeOnly: false,
+      noProp65: false,
       marks: null,
     });
 
@@ -230,10 +238,25 @@ describe("searchRequestKey", () => {
           clayBodyIds: [],
           marks: [],
           foodSafeOnly: false,
+          applications: [],
+          inStockOnly: false,
+          dinnerwareSafeOnly: false,
+          foodSafeUnderGlazeOnly: false,
+          leadFreeOnly: false,
+          noProp65: false,
         },
         40
       )
     ).toBe(searchRequestKey("", {}, 40));
+  });
+
+  it("treats the application facet as a set", () => {
+    expect(searchRequestKey("", { applications: ["dipping", "brushing"] }, 40)).toBe(
+      searchRequestKey("", { applications: ["brushing", "dipping"] }, 40)
+    );
+    expect(searchRequestKey("", { priceMax: 20 }, 40)).not.toBe(
+      searchRequestKey("", { priceMax: 25 }, 40)
+    );
   });
 
   it("carries every set facet, and the limit is part of the identity", () => {
@@ -251,6 +274,14 @@ describe("searchRequestKey", () => {
             foodSafeOnly: true,
             clayBodyIds: [2],
             marks: [{ manufacturer: " AMACO ", code: " pc-20 " }],
+            priceMin: 5,
+            priceMax: 20,
+            inStockOnly: true,
+            applications: ["dipping"],
+            dinnerwareSafeOnly: true,
+            foodSafeUnderGlazeOnly: true,
+            leadFreeOnly: true,
+            noProp65: true,
           },
           40
         )
@@ -266,6 +297,14 @@ describe("searchRequestKey", () => {
       opacityIds: [3],
       foodSafeOnly: true,
       clayBodyIds: [2],
+      priceMin: 5,
+      priceMax: 20,
+      inStockOnly: true,
+      applications: ["dipping"],
+      dinnerwareSafeOnly: true,
+      foodSafeUnderGlazeOnly: true,
+      leadFreeOnly: true,
+      noProp65: true,
       marks: [{ manufacturer: "amaco", code: "PC-20" }],
     });
 
