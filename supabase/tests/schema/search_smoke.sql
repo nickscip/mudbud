@@ -50,6 +50,24 @@ where m.key = 'amaco'
   and g.manufacturer_id = m.id
   and g.code = v.code;
 
+-- Price, stock, application and the safety flags (A4's second half), set so every new parameter
+-- has a row it keeps and a row it drops. PC-30 is deliberately unpriced and E7-marked, and its
+-- prop65 stays null alongside PC-13's and LG-99's: the parsers only ever record the warning's
+-- presence, so "no Prop 65 warning" has to read null as no warning or it can never return a row.
+update glazes g
+set price_min = v.price_min, price_max = v.price_max, availability = v.availability,
+    is_dipping = v.dipping, is_brushing = v.brushing,
+    dinnerware_safe = v.dinnerware, food_safe_under_glaze = v.fsug,
+    lead_free = v.lead_free, prop65 = v.prop65
+from (values
+  ('PC-20', 12.50, 30.00, 'InStock',     true,  null,  true,  null,  null,  true),
+  ('PC-13', 25.00, 25.00, 'OutOfStock',  null,  true,  null,  true,  true,  null),
+  ('LG-99',  8.00, 60.00, 'InStock',     null,  null,  null,  null,  null,  null),
+  ('PC-30',  null,  null, 'Unavailable', null,  null,  null,  null,  null,  null)
+) as v(code, price_min, price_max, availability, dipping, brushing, dinnerware, fsug, lead_free, prop65),
+     manufacturers m
+where m.key = 'amaco' and g.manufacturer_id = m.id and g.code = v.code;
+
 -- Appearances, so the LATERAL aggregate and the clay-body filter are actually exercised.
 -- Without these the hero image, coat count, layering count and clay list all come back
 -- null while every other assertion still passes.
@@ -155,6 +173,52 @@ begin
       from clay_bodies cb join manufacturers m on m.id = cb.manufacturer_id
       where m.key = 'amaco' and cb.code = '16')]::smallint[]);
   if n <> 0 then raise exception 'clay filter leaked on the near tier'; end if;
+
+  -- Price bounds the cheapest size, the "From $X" the card shows. 10–20 keeps only PC-20 (12.50);
+  -- PC-13 at 25.00 and LG-99 at 8.00 fall outside, and unpriced PC-30 cannot be shown in range.
+  select count(*) into n from search_glazes(null, p_price_min := 10, p_price_max := 20);
+  if n <> 1 then raise exception 'price 10-20 returned % rows, expected 1', n; end if;
+  select count(*) into n from search_glazes(null, p_price_max := 10);
+  if n <> 1 then raise exception 'price up to 10 returned % rows, expected 1 (LG-99)', n; end if;
+  select count(*) into n from search_glazes(null, p_price_min := 12.50);
+  if n <> 2 then raise exception 'price from 12.50 returned % rows, expected 2', n; end if;
+
+  -- In stock is a positive match on the one value both parsers write; OutOfStock and E7's
+  -- Unavailable marker both fail it.
+  select count(*) into n from search_glazes(null, p_in_stock := true);
+  if n <> 2 then raise exception 'in-stock returned % rows, expected 2', n; end if;
+
+  -- Application ORs within the facet: dipping alone is PC-20, brushing alone is PC-13, both is both.
+  select count(*) into n from search_glazes(null, p_application := array['dipping']);
+  if n <> 1 then raise exception 'dipping returned % rows, expected 1', n; end if;
+  select count(*) into n from search_glazes(null, p_application := array['dipping', 'brushing']);
+  if n <> 2 then raise exception 'dipping or brushing returned % rows, expected 2', n; end if;
+
+  -- The positive safety flags match only a stated true; null is silence, not a yes.
+  select count(*) into n from search_glazes(null, p_dinnerware_safe := true);
+  if n <> 1 then raise exception 'dinnerware safe returned % rows, expected 1', n; end if;
+  select count(*) into n from search_glazes(null, p_food_safe_under_glaze := true);
+  if n <> 1 then raise exception 'food safe under glaze returned % rows, expected 1', n; end if;
+  select count(*) into n from search_glazes(null, p_lead_free := true);
+  if n <> 1 then raise exception 'lead free returned % rows, expected 1', n; end if;
+
+  -- Prop 65 is inverted in use: false means "no warning", and null counts as no warning because
+  -- the parsers never write false. PC-20 is the only glaze that carries one.
+  select count(*) into n from search_glazes(null, p_prop65 := false);
+  if n <> 3 then raise exception 'no-Prop-65 returned % rows, expected 3', n; end if;
+  select count(*) into n from search_glazes(null, p_prop65 := true);
+  if n <> 1 then raise exception 'Prop 65 returned % rows, expected 1', n; end if;
+
+  -- The new filters AND across facets and apply to the near tier like everything else.
+  select count(*) into n from search_glazes(null, p_in_stock := true, p_price_max := 10);
+  if n <> 1 then raise exception 'in-stock AND price returned % rows, expected 1', n; end if;
+  select count(*) into n from search_glazes('temoku', p_in_stock := true);
+  if n <> 0 then raise exception 'in-stock leaked on the near tier'; end if;
+
+  -- A bundle still sending the 13-argument form must resolve to this function unchanged.
+  select count(*) into n from search_glazes(
+    null, null, null, null, null, null, null, null, null, 40, 0, null, null);
+  if n <> 4 then raise exception '13-argument call returned % rows, expected 4', n; end if;
 
   raise notice 'search_glazes: all assertions passed';
 end $$;
@@ -348,7 +412,7 @@ declare
   actual_ids   bigint[];
 begin
   select pg_get_functiondef(
-    'search_glazes(text,smallint[],smallint[],smallint,smallint,smallint[],smallint[],boolean,smallint[],integer,integer,text[],text[])'::regprocedure
+    'search_glazes(text,smallint[],smallint[],smallint,smallint,smallint[],smallint[],boolean,smallint[],integer,integer,text[],text[],numeric,numeric,boolean,text[],boolean,boolean,boolean,boolean)'::regprocedure
   ) into function_def;
   if function_def !~ 't[.]code[[:space:]]*,[[:space:]]*t[.]id' then
     raise exception 'search_glazes page membership is missing the t.id tie-break';

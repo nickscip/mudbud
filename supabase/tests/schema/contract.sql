@@ -155,7 +155,7 @@ end if;
 -- full because that is the signature a drop-and-recreate has to re-grant, and a forgotten grant
 -- is invisible until the app calls it.
 foreach got in array array[
-  'search_glazes(text, smallint[], smallint[], smallint, smallint, smallint[], smallint[], boolean, smallint[], integer, integer, text[], text[])',
+  'search_glazes(text, smallint[], smallint[], smallint, smallint, smallint[], smallint[], boolean, smallint[], integer, integer, text[], text[], numeric, numeric, boolean, text[], boolean, boolean, boolean, boolean)',
   'glaze_by_code(text, text)',
   'glaze_appearances(text, text)',
   'similar_glazes(text, text, integer)',
