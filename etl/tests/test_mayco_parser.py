@@ -799,6 +799,36 @@ class TestClayBody:
         assert facts.role is ImageRole.LINE_CHART
         assert facts.clay_body_code == "white"
 
+    def test_alt_naming_a_clay_this_vocabulary_does_not_know_resolves_none(self) -> None:
+        """The narrowing that counting only *recognized* phrases used to allow.
+
+        "white clay and purple clay" matched one phrase, so the one-clay check passed and
+        the image was recorded as white at full confidence — a two-clay frame reported as a
+        one-clay frame with nothing left over to notice. An unmatched `clay` now disqualifies
+        the channel, which is also how a body Mayco starts using becomes visible instead of
+        being absorbed into whichever known colour shares the frame.
+        """
+        facts = interpret_filename("sw-001_tile.jpg", "SW-001", "white clay and purple clay")
+
+        assert facts.clay_body_code is None
+        assert "clay" in facts.unmatched_tokens
+
+    def test_a_filename_naming_two_clays_resolves_neither(self) -> None:
+        """The filename channel took its first match with no multi-clay check at all, so a
+        frame naming white and black was recorded as white."""
+        facts = interpret_filename("sw-001_white_clay_black_clay.jpg", "SW-001")
+
+        assert facts.clay_body_code is None
+        assert {"white", "black"} <= set(facts.unmatched_tokens)
+
+    def test_an_ambiguous_filename_is_not_settled_by_alt(self) -> None:
+        """Alt is the copy-pasted channel — `black_clay_si02_black_ice` and
+        `brown_clay_standard_266` both say "dark brown clay" — so it cannot adjudicate
+        between two bodies the filename itself names."""
+        facts = interpret_filename("sw-001_white_clay_black_clay.jpg", "SW-001", "on red clay")
+
+        assert facts.clay_body_code is None
+
     def test_every_phrase_maps_to_a_seeded_code(self) -> None:
         """The grammar can only emit codes the migration seeds, or the normalizer files
         `unknown_clay_body` for a spelling this module knew perfectly well."""

@@ -69,6 +69,31 @@ def _clay_code(match: re.Match[str]) -> str:
     return CLAY_PHRASES[re.sub(r"[-_ ]", " ", match.group(1))]
 
 
+_CLAY_WORD_RE = re.compile(r"(?<![a-z0-9])clay(?![a-z0-9])")
+"""Every `clay` the text says, recognized or not. Counting these against the phrases
+`_CLAY_RE` actually resolved is what distinguishes "one clay, understood" from "two clays,
+one of which this vocabulary has never heard of"."""
+
+
+def _sole_clay(text: str) -> re.Match[str] | None:
+    """The one clay this text names, or None when it names none, several, or one this
+    vocabulary cannot spell.
+
+    `appearances.clay_body_id` holds a single body, so a frame showing several has no
+    honest answer and must record none — Melt Gloop's alt lists four. The subtler case is
+    partial recognition: "white clay and purple clay" resolves only `white`, and taking it
+    would report a two-clay image as a white-clay one at full confidence, with nothing left
+    over to notice. So an unmatched `clay` is disqualifying too, which also keeps the
+    corpus's own about-clay phrases ("clay bodies test", "clay-body-drips") from ever
+    resolving.
+    """
+    matches = list(_CLAY_RE.finditer(text))
+    mentions = len(_CLAY_WORD_RE.findall(text))
+    if len(matches) == mentions and len({_clay_code(m) for m in matches}) == 1:
+        return matches[0]
+    return None
+
+
 _SIZE_SUFFIX_RE = re.compile(r"-\d{2,4}x\d{2,4}$")
 _SCALED_SUFFIX_RE = re.compile(r"-scaled$")
 _YEAR_RE = re.compile(r"^(?:19|20)\d{2}$")
@@ -231,19 +256,20 @@ def interpret_filename(
     # Same precedence as cone, and here it matters: the 2026 release alt is copy-pasted
     # (`black_clay_si02_black_ice` and `brown_clay_standard_266` both say "dark brown
     # clay"), while the filename names the actual body.
+    # Both channels go through `_sole_clay`, so neither can narrow several clays to whichever
+    # one it matched first. A filename that *names* a body settles the question — ambiguously
+    # if it names two, since alt is the copy-pasted channel and cannot adjudicate between them.
+    # A filename that only says the word (`clay-body-bowls`, a comparison shot) has named
+    # nothing, so alt is still where the body comes from.
     clay_body: str | None = None
-    if match := _CLAY_RE.search(stem):
+    if _CLAY_RE.search(stem):
+        if match := _sole_clay(stem):
+            clay_body = _clay_code(match)
+            consumed.append(match.span())
+            evidence["clay_body"] = match.group(0)
+    elif alt and (match := _sole_clay(alt.lower())):
         clay_body = _clay_code(match)
-        consumed.append(match.span())
-        evidence["clay_body"] = match.group(0)
-    elif alt:
-        in_alt = list(_CLAY_RE.finditer(alt.lower()))
-        if len({_clay_code(m) for m in in_alt}) == 1:
-            # Exactly one clay. Melt Gloop's alt lists four — "(speckled clay, red clay,
-            # brown clay, black clay)" — and `appearances.clay_body_id` holds one, so that
-            # image gets none rather than whichever Mayco happened to write first.
-            clay_body = _clay_code(in_alt[0])
-            evidence["clay_body_from_alt"] = in_alt[0].group(0)
+        evidence["clay_body_from_alt"] = match.group(0)
 
     # --- coats: only the verified four-count marker is a composite ------------------
     coats: str | None = None
