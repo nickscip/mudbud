@@ -45,20 +45,22 @@ class TestClayBody:
     @pytest.mark.parametrize(
         ("filename", "expected"),
         [
-            ("PC-70_over_PCF-54_16M_Vase_Website.jpg", 16),
-            ("PC-56_over_PCF-54_32M_Vase_Website.jpg", 32),
+            ("PC-70_over_PCF-54_16M_Vase_Website.jpg", "16"),
+            ("PC-56_over_PCF-54_32M_Vase_Website.jpg", "32"),
         ],
     )
-    def test_clay_number_extracted(self, filename: str, expected: int) -> None:
-        assert interpret_filename(filename, "PCF-54").clay_body_number == expected
+    def test_clay_number_extracted(self, filename: str, expected: str) -> None:
+        """The code is AMACO's number as text — `clay_bodies.code` is text, and Mayco's
+        codes are words, so the shared field cannot be an int."""
+        assert interpret_filename(filename, "PCF-54").clay_body_code == expected
 
     def test_unknown_clay_number_rejected(self) -> None:
         """`99M` is not a clay AMACO sells, so it is not a clay body."""
-        assert interpret_filename("PC-1_over_PC-2_99M_Vase.jpg", "PC-1").clay_body_number is None
+        assert interpret_filename("PC-1_over_PC-2_99M_Vase.jpg", "PC-1").clay_body_code is None
 
     def test_tile_dimension_is_not_a_clay_body(self) -> None:
         f = interpret_filename("LG-65_Amber_Blick_FishTile_5-16-Square-WEB.jpg", "LG-65")
-        assert f.clay_body_number is None
+        assert f.clay_body_code is None
 
 
 class TestRoles:

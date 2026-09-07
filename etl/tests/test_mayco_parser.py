@@ -38,7 +38,12 @@ from glaze_etl.sources.mayco.parser import (
     clean_text,
     parse_product,
 )
-from glaze_etl.sources.mayco.vocabulary import CATEGORY_CONE_RANGE, CONE_UNSTATED
+from glaze_etl.sources.mayco.vocabulary import (
+    CATEGORY_CONE_RANGE,
+    CLAY_BODIES,
+    CLAY_PHRASES,
+    CONE_UNSTATED,
+)
 from tests.conftest import all_product_slugs, fixture_dir, raw_snapshot, snapshot_for
 
 SLUGS = all_product_slugs("mayco")
@@ -703,6 +708,132 @@ class TestGrammar:
         facts = interpret_filename("sw-104_mug_web.jpg", "SW-104")
         assert facts.unmatched_tokens == ()
         assert facts.evidence["form"] == "mug"
+
+
+class TestClayBody:
+    """Mayco names its clays rather than numbering them (F8a).
+
+    Every filename and alt string here is real, from a sweep of all 657 fired products
+    (2985 images) on 2026-09-05. The counts in the docstrings are from that sweep.
+    """
+
+    def test_filename_names_the_clay(self) -> None:
+        """`_dark_clay_web` is the single largest clay signal: 64 Stoneware images, no alt."""
+        facts = interpret_filename("sw-104_dark_clay_web.jpg", "SW-104")
+        assert facts.clay_body_code == "dark"
+        assert facts.evidence["clay_body"] == "dark_clay"
+        assert facts.unmatched_tokens == ()
+        assert facts.confidence is Confidence.HIGH
+
+    def test_alt_text_names_the_clay_when_the_filename_does_not(self) -> None:
+        facts = interpret_filename(
+            "sw-clay-body-drips_sw219_IG04.jpg", "SW-219", "Speckled Clay, cone 6 oxidation"
+        )
+        assert facts.clay_body_code == "speckled"
+        assert facts.evidence["clay_body_from_alt"] == "speckled clay"
+
+    def test_the_filename_wins_over_the_alt(self) -> None:
+        """The 2026 release alt is copy-pasted: `black_clay_si02_black_ice` and
+        `brown_clay_standard_266` both say "dark brown clay". The filename names the
+        actual body (SiO2 Black Ice), so it is the channel to trust when both speak."""
+        facts = interpret_filename(
+            "2026_sw_release_black_clay_si02_black_ice_labeled_crop.jpg",
+            "SW-520",
+            "2026 Mayco Stoneware Glaze release on dark brown clay, cone 6 oxidation",
+        )
+        assert facts.clay_body_code == "black"
+        assert "clay_body_from_alt" not in facts.evidence
+
+    @pytest.mark.parametrize(
+        ("filename", "alt", "expected"),
+        [
+            # `brown_clay_standard_266` pairs with alt "dark brown clay" on all 8 images, and
+            # the engobe series spells it "Dark Brown Clay". Bare "brown" is the same body.
+            ("2026_sw_release_brown_clay_standard_266_labeled_crop.jpg", None, "dark-brown"),
+            # `speckled_clay_standard_212` pairs with alt "speckled brown clay" on all 8.
+            ("2024_SW_bowls_2.jpg", "Glaze on speckled brown clay, cone 6", "speckled"),
+            ("sw-166_brown_speckled_clay__website.jpg", None, "speckled"),
+            ("2026_sw_release_white_wheat_clay_runyan_wheat_labeled_crop.jpg", None, "wheat"),
+            ("2025-sw-release_dark_brown_clay_labeled_crop.jpg", None, "dark-brown"),
+            ("2025-sw-release_red_clay_labeled_crop.jpg", None, "red"),
+            ("2025-sw-release_white_clay_labeled_crop.jpg", None, "white"),
+        ],
+    )
+    def test_every_spelling_resolves_to_one_code(
+        self, filename: str, alt: str | None, expected: str
+    ) -> None:
+        assert interpret_filename(filename, "SW-214", alt).clay_body_code == expected
+
+    def test_an_alt_naming_several_clays_sets_none(self) -> None:
+        """One image, four clays: `appearances.clay_body_id` holds one. Picking the first
+        would attribute a four-clay tile to whichever clay Mayco happened to list first."""
+        facts = interpret_filename(
+            "MeltGloop-Test-tile_1.jpg",
+            "SW-401",
+            "Melt Gloop shown on alternative clay bodies (speckled clay, red clay, brown clay, "
+            "black clay) fired to cone 6 oxidation",
+        )
+        assert facts.clay_body_code is None
+        assert "clay" in facts.unmatched_tokens
+
+    @pytest.mark.parametrize(
+        ("filename", "alt"),
+        [
+            ("SW460_clay_bodies_test.jpg", None),
+            ("Beads_on_other_clays_crop.jpg", "Beads on alternative clay bodies, cone 6 oxidation"),
+            ("engobes-v-clay_IG_06.jpg", None),
+        ],
+    )
+    def test_the_word_clay_alone_is_not_a_clay_body(self, filename: str, alt: str | None) -> None:
+        """`clay` still surfaces as unmatched so an unrecognised spelling is visible."""
+        facts = interpret_filename(filename, "SW-460", alt)
+        assert facts.clay_body_code is None
+        assert "clay" in facts.unmatched_tokens
+
+    def test_a_line_image_still_records_its_clay(self) -> None:
+        """LINE_CHART yields no appearance, so the code is inert there — but the grammar
+        reads what is stated and the writer decides what to do with it."""
+        facts = interpret_filename(
+            "2024_SW_lineup_clay-body-bowls_1_IGtall.jpg", "SW-214", "White Clay, cone 6 oxidation"
+        )
+        assert facts.role is ImageRole.LINE_CHART
+        assert facts.clay_body_code == "white"
+
+    def test_alt_naming_a_clay_this_vocabulary_does_not_know_resolves_none(self) -> None:
+        """The narrowing that counting only *recognized* phrases used to allow.
+
+        "white clay and purple clay" matched one phrase, so the one-clay check passed and
+        the image was recorded as white at full confidence — a two-clay frame reported as a
+        one-clay frame with nothing left over to notice. An unmatched `clay` now disqualifies
+        the channel, which is also how a body Mayco starts using becomes visible instead of
+        being absorbed into whichever known colour shares the frame.
+        """
+        facts = interpret_filename("sw-001_tile.jpg", "SW-001", "white clay and purple clay")
+
+        assert facts.clay_body_code is None
+        assert "clay" in facts.unmatched_tokens
+
+    def test_a_filename_naming_two_clays_resolves_neither(self) -> None:
+        """The filename channel took its first match with no multi-clay check at all, so a
+        frame naming white and black was recorded as white."""
+        facts = interpret_filename("sw-001_white_clay_black_clay.jpg", "SW-001")
+
+        assert facts.clay_body_code is None
+        assert {"white", "black"} <= set(facts.unmatched_tokens)
+
+    def test_an_ambiguous_filename_is_not_settled_by_alt(self) -> None:
+        """Alt is the copy-pasted channel — `black_clay_si02_black_ice` and
+        `brown_clay_standard_266` both say "dark brown clay" — so it cannot adjudicate
+        between two bodies the filename itself names."""
+        facts = interpret_filename("sw-001_white_clay_black_clay.jpg", "SW-001", "on red clay")
+
+        assert facts.clay_body_code is None
+
+    def test_every_phrase_maps_to_a_seeded_code(self) -> None:
+        """The grammar can only emit codes the migration seeds, or the normalizer files
+        `unknown_clay_body` for a spelling this module knew perfectly well."""
+        assert set(CLAY_PHRASES.values()) <= set(CLAY_BODIES)
+        assert set(CLAY_BODIES) <= set(CLAY_PHRASES.values())
 
 
 class TestTextCleaning:

@@ -223,8 +223,11 @@ class ImageFacts(Frozen):
     coat_level: CoatLevel | None = None
     """Only ever set by CompositeSplitter — thickness lives inside the pixels, not
     the filename."""
-    clay_body_number: int | None = None
-    """AMACO clay number, e.g. 16 (White Chocolate) or 32 (Dark Chocolate)."""
+    clay_body_code: str | None = None
+    """The manufacturer's own key for the clay, as `clay_bodies.code` spells it: AMACO's
+    number as text (`"16"` White Chocolate, `"32"` Dark Chocolate), Mayco's word
+    (`"white"`, `"dark-brown"`). Text rather than int because Mayco names its clays and
+    never numbers them (F8a); the normalizer resolves it against one manufacturer's rows."""
     form: FormKind | None = None
     tile_size: str | None = None
     credit: str | None = None

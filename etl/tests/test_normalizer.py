@@ -54,11 +54,13 @@ class TestConeNames:
 
 
 class TestClayBodies:
-    def test_a_number_resolves_through_its_string_code(self, normalizer: Normalizer) -> None:
-        assert normalizer.clay_body_id(16) == 2
+    def test_a_code_resolves_to_its_id(self, normalizer: Normalizer) -> None:
+        """AMACO's codes happen to be numeric strings; Mayco's aren't ("white",
+        "dark-brown"), which is why this is never cast to an int."""
+        assert normalizer.clay_body_id("16") == 2
 
     def test_an_unseeded_clay_is_none(self, normalizer: Normalizer) -> None:
-        assert normalizer.clay_body_id(99) is None
+        assert normalizer.clay_body_id("99") is None
 
     def test_no_clay_is_none(self, normalizer: Normalizer) -> None:
         assert normalizer.clay_body_id(None) is None
@@ -94,7 +96,7 @@ class TestResolveAppearance:
     def test_everything_known_resolves_and_reports_nothing(self, normalizer: Normalizer) -> None:
         resolution = normalizer.resolve_appearance(
             cone="05",
-            clay_body_number=16,
+            clay_body_code="16",
             form=FormKind.FLAT_TILE,
             coat_level=CoatLevel.LIGHT,
         )
@@ -109,7 +111,7 @@ class TestResolveAppearance:
         unmappable form must not lose an otherwise good appearance row."""
         resolution = normalizer.resolve_appearance(
             cone="10",
-            clay_body_number=99,
+            clay_body_code="99",
             form=FormKind.VASE,
             coat_level=CoatLevel.ONE,
         )

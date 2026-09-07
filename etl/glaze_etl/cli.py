@@ -203,8 +203,8 @@ def _report(adapter: SourceAdapter, snapshot: RawSnapshot) -> None:
             bits.append("combo=" + "+".join(facts.combination_codes))
         if facts.cone:
             bits.append(f"cone={facts.cone}")
-        if facts.clay_body_number:
-            bits.append(f"clay={facts.clay_body_number}")
+        if facts.clay_body_code:
+            bits.append(f"clay={facts.clay_body_code}")
         if facts.form:
             bits.append(f"form={facts.form.value}")
         colour = {

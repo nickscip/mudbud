@@ -180,13 +180,51 @@ them as unmatched tokens rather than swallowing them: `reduction` appears in 92 
 and `soda` in 48, so this is a real gap in the schema rather than a rounding error, and it
 should surface in the parse-issue queue until there is somewhere for it to go."""
 
-CLAY_WORDS: frozenset[str] = frozenset(
-    {"clay", "body", "white", "brown", "dark", "speckled", "red"}
-)
-"""Clay-body vocabulary Mayco puts in filenames and alt text ("White Clay, cone 6
-oxidation"). Also unused, and for a sharper reason than atmosphere: `ImageFacts` carries
-`clay_body_number`, an integer keyed on AMACO's numbered clays, while Mayco names its
-clays instead of numbering them. Inventing numbers for them is the part that has no
-answer; it is no longer also true that a number would land on whichever brand's row
-loaded first — `Vocabularies.clay_bodies` is scoped to one manufacturer (F8a), and
-Mayco's is empty until its clays are seeded. Reported, not guessed."""
+CLAY_BODIES: dict[str, tuple[str, str]] = {
+    # code -> (name, color family), seeded by 20260905000100_mayco_clay_bodies.sql, which
+    # supabase/tests/schema/contract.sql pins to exactly this list.
+    #
+    # Mayco names its clays rather than numbering them, and the clays are not Mayco's: the
+    # 2026 release filenames spell out the bodies (`white_clay_standard_181`,
+    # `speckled_clay_standard_212`, `red_clay_standard_308`, `brown_clay_standard_266`,
+    # `white_wheat_clay_runyan_wheat`, `black_clay_si02_black_ice`). These codes are
+    # Mayco's *labels* for those bodies, which is what its alt text and the app both use.
+    #
+    # Derived from a sweep of all 657 fired products (2985 images) on 2026-09-05. The same
+    # five — white, speckled, red, dark brown, black — recur in four independent series
+    # (2024 lineup bowls, 2025 release tiles, the clay-body-drips set, engobe comparisons).
+    # `wheat` appears only in the 2026 release. `dark` is `_dark_clay_web` on 64 Stoneware
+    # filenames with no alt text; it is not one of the six labels above and nothing says
+    # whether it is Dark Brown or Black, so it is its own row rather than a guess. Merge
+    # when evidence turns up, not before.
+    "white": ("White Clay", "white"),
+    "speckled": ("Speckled Clay", "speckled"),
+    "red": ("Red Clay", "dark"),
+    "dark-brown": ("Dark Brown Clay", "dark"),
+    "black": ("Black Clay", "dark"),
+    "wheat": ("Wheat Clay", "buff"),
+    "dark": ("Dark Clay", "dark"),
+}
+
+CLAY_PHRASES: dict[str, str] = {
+    # Words immediately before `clay`, in filenames and alt text -> code. Two merges, each
+    # justified by a filename/alt pairing rather than by resemblance:
+    # `speckled_clay_standard_212` carries alt "speckled brown clay" on all 8 images, and
+    # `sw-166_brown_speckled_clay` is the same body spelled backwards; `brown_clay_standard_266`
+    # carries alt "dark brown clay" on all 8, and the engobe series calls it "Dark Brown Clay".
+    "white": "white",
+    "speckled": "speckled",
+    "speckled brown": "speckled",
+    "brown speckled": "speckled",
+    "red": "red",
+    "dark brown": "dark-brown",
+    "brown": "dark-brown",
+    "black": "black",
+    "wheat": "wheat",
+    "white wheat": "wheat",
+    "dark": "dark",
+}
+"""Not in this map, deliberately: "alternative clay bodies" (a tile of several clays),
+"clay bodies test", "clay-body-drips" and "engobes-v-clay" — the word `clay` with no colour
+before it says an image is *about* clay, not which one. The grammar leaves `clay` in
+`unmatched_tokens` for those so a new label shows up rather than vanishing."""

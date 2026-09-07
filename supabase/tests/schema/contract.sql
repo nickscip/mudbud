@@ -310,6 +310,22 @@ if got is distinct from want then
   raise exception E'coat level seeds changed.\n  got:  %\n  want: %', got, want;
 end if;
 
+-- F8a: Mayco names its clays, so its codes are words where AMACO's are numbers. The ETL's
+-- `CLAY_BODIES` in sources/mayco/vocabulary.py must match this list exactly — the grammar
+-- emits these codes and the normalizer files `unknown_clay_body` for anything not seeded.
+select string_agg(cb.code || ':' || cb.name || ':' || cb.color_family, ', ' order by cb.code)
+  into got
+from clay_bodies cb join manufacturers m on m.id = cb.manufacturer_id
+where m.key = 'mayco';
+
+want := 'black:Black Clay:dark, dark:Dark Clay:dark, dark-brown:Dark Brown Clay:dark, '
+     || 'red:Red Clay:dark, speckled:Speckled Clay:speckled, wheat:Wheat Clay:buff, '
+     || 'white:White Clay:white';
+
+if got is distinct from want then
+  raise exception E'mayco clay body seeds changed.\n  got:  %\n  want: %', got, want;
+end if;
+
 raise notice 'contract: vocabulary invariants hold';
 end $$;
 

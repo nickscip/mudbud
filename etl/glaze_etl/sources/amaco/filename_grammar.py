@@ -161,11 +161,12 @@ def interpret_filename(
         evidence["cone"] = m.group(0)
 
     # --- clay body, checked against the clays AMACO actually sells -----------------
-    clay_body: int | None = None
+    clay_body: str | None = None
     for m in _CLAY_RE.finditer(stem):
         candidate = int(m.group(1))
         if candidate in CLAY_BODIES:
-            clay_body = candidate
+            # `clay_bodies.code` is text — `'16'`, not 16 — because Mayco's codes are words.
+            clay_body = str(candidate)
             consumed.append(m.span())
             evidence["clay_body"] = m.group(0)
             break
@@ -262,7 +263,7 @@ def interpret_filename(
         layered_over_code=base_code,
         combination_codes=combination,
         cone=cone,
-        clay_body_number=clay_body,
+        clay_body_code=clay_body,
         form=form,
         tile_size=tile_size,
         # Credit is deliberately not read from filenames. `Blick` (a retailer),

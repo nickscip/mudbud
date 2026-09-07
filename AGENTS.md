@@ -71,7 +71,7 @@ The local device schema (`src/db/`) has its own check, because its upgrade path 
 on a phone that installed the app before the change:
 
 ```
-npx jest test/db
+npm test -- test/db
 ```
 
 That is part of the Jest suite. `npm test` runs it without coverage — the fast loop — and
