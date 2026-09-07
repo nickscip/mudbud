@@ -8,6 +8,8 @@ import {
   buildSearchPageParams,
   glazeLineLabel,
   onlyPopulatedOptions,
+  orderedPriceRange,
+  parsePriceBound,
   pruneManufacturerScopedFilters,
   toggleFilterId,
   withConeFrom,
@@ -16,7 +18,7 @@ import {
 import { clayBodyOption, lineOption } from "../../fixtures";
 
 describe("buildSearchGlazesParams", () => {
-  it("maps every client facet onto the existing RPC names", () => {
+  it("maps every client facet onto the RPC names", () => {
     expect(
       buildSearchGlazesParams(
         "  blue  ",
@@ -33,6 +35,14 @@ describe("buildSearchGlazesParams", () => {
             { manufacturer: "amaco", code: "PC-20" },
             { manufacturer: "mayco", code: "SW-214" },
           ],
+          priceMin: 10,
+          priceMax: 25.5,
+          inStockOnly: true,
+          applications: ["dipping", "brushing"],
+          dinnerwareSafeOnly: true,
+          foodSafeUnderGlazeOnly: true,
+          leadFreeOnly: true,
+          noProp65: true,
         },
         40
       )
@@ -50,11 +60,26 @@ describe("buildSearchGlazesParams", () => {
       p_code_manufacturers: ["amaco", "mayco"],
       p_limit: 40,
       p_offset: 0,
+      p_price_min: 10,
+      p_price_max: 25.5,
+      p_in_stock: true,
+      p_application: ["dipping", "brushing"],
+      p_dinnerware_safe: true,
+      p_food_safe_under_glaze: true,
+      p_lead_free: true,
+      // Inverted on the wire: "no Prop 65 warning" is prop65 = false.
+      p_prop65: false,
     });
   });
 
   it("normalizes blank text and empty selections to null", () => {
-    expect(buildSearchGlazesParams("  ", { manufacturerIds: [], marks: [] }, 12)).toEqual({
+    expect(
+      buildSearchGlazesParams(
+        "  ",
+        { manufacturerIds: [], marks: [], applications: [] },
+        12
+      )
+    ).toEqual({
       q: null,
       p_manufacturer: null,
       p_line: null,
@@ -68,14 +93,72 @@ describe("buildSearchGlazesParams", () => {
       p_code_manufacturers: null,
       p_limit: 12,
       p_offset: 0,
+      p_price_min: null,
+      p_price_max: null,
+      p_in_stock: null,
+      p_application: null,
+      p_dinnerware_safe: null,
+      p_food_safe_under_glaze: null,
+      p_lead_free: null,
+      p_prop65: null,
     });
   });
 
-  it("passes an explicit offset through and treats foodSafeOnly:false as unset", () => {
-    const params = buildSearchGlazesParams("code", { foodSafeOnly: false }, 40, 120);
+  it("passes an explicit offset through and treats a false flag as unset", () => {
+    const params = buildSearchGlazesParams(
+      "code",
+      {
+        foodSafeOnly: false,
+        inStockOnly: false,
+        dinnerwareSafeOnly: false,
+        foodSafeUnderGlazeOnly: false,
+        leadFreeOnly: false,
+        noProp65: false,
+      },
+      40,
+      120
+    );
     expect(params.p_offset).toBe(120);
     expect(params.p_food_safe).toBeNull();
+    expect(params.p_in_stock).toBeNull();
+    expect(params.p_dinnerware_safe).toBeNull();
+    expect(params.p_food_safe_under_glaze).toBeNull();
+    expect(params.p_lead_free).toBeNull();
+    expect(params.p_prop65).toBeNull();
     expect(params.q).toBe("code");
+  });
+
+  it("sends a zero price bound rather than dropping it", () => {
+    expect(buildSearchGlazesParams("", { priceMin: 0 }, 40).p_price_min).toBe(0);
+  });
+});
+
+describe("parsePriceBound", () => {
+  it("reads a typed amount and leaves blank or nonsense unset", () => {
+    expect(parsePriceBound(" 12.50 ")).toBe(12.5);
+    expect(parsePriceBound("0")).toBe(0);
+    expect(parsePriceBound("")).toBeUndefined();
+    expect(parsePriceBound("   ")).toBeUndefined();
+    expect(parsePriceBound("12.")).toBe(12);
+    expect(parsePriceBound("abc")).toBeUndefined();
+    expect(parsePriceBound("-5")).toBeUndefined();
+  });
+});
+
+describe("orderedPriceRange", () => {
+  it("swaps crossed bounds and leaves anything else untouched", () => {
+    expect(orderedPriceRange({ priceMin: 30, priceMax: 10 })).toEqual({
+      priceMin: 10,
+      priceMax: 30,
+    });
+    const ordered = { priceMin: 10, priceMax: 30, inStockOnly: true };
+    expect(orderedPriceRange(ordered)).toBe(ordered);
+    const oneEnd = { priceMax: 10 };
+    expect(orderedPriceRange(oneEnd)).toBe(oneEnd);
+    expect(orderedPriceRange({ priceMin: 10, priceMax: 10 })).toEqual({
+      priceMin: 10,
+      priceMax: 10,
+    });
   });
 });
 
@@ -98,6 +181,11 @@ describe("toggleFilterId", () => {
 
   it("keeps the other ids when one of several is removed", () => {
     expect(toggleFilterId([2, 3, 4], 3)).toEqual([2, 4]);
+  });
+
+  it("works for the string-keyed application facet too", () => {
+    expect(toggleFilterId(["dipping"], "brushing")).toEqual(["dipping", "brushing"]);
+    expect(toggleFilterId(["dipping"], "dipping")).toBeUndefined();
   });
 });
 
@@ -226,6 +314,25 @@ describe("activeGlazeFilterCount", () => {
   it("counts a cone range pinned only at its upper end", () => {
     expect(
       activeGlazeFilterCount({ lineIds: [1], surfaceIds: [2], clayBodyIds: [3], coneTo: 28 })
+    ).toBe(4);
+  });
+
+  it("counts price, stock and application as one facet each, and every safety flag as one", () => {
+    expect(activeGlazeFilterCount({ priceMax: 20 })).toBe(1);
+    expect(activeGlazeFilterCount({ priceMin: 5, priceMax: 20 })).toBe(1);
+    expect(activeGlazeFilterCount({ inStockOnly: true })).toBe(1);
+    expect(activeGlazeFilterCount({ applications: ["dipping", "brushing"] })).toBe(1);
+    expect(
+      activeGlazeFilterCount({
+        dinnerwareSafeOnly: true,
+        foodSafeUnderGlazeOnly: true,
+        leadFreeOnly: true,
+        noProp65: true,
+      })
+    ).toBe(1);
+    expect(activeGlazeFilterCount({ foodSafeOnly: true, leadFreeOnly: true })).toBe(1);
+    expect(
+      activeGlazeFilterCount({ priceMin: 0, inStockOnly: true, applications: ["dipping"], noProp65: true })
     ).toBe(4);
   });
 });

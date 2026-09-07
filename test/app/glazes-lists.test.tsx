@@ -179,6 +179,14 @@ it("asks the catalog for exactly the segment's refs and renders them as cards", 
     // The ref list is exact, so the limit is its length — plus the usual sentinel row.
     p_limit: 3,
     p_offset: 0,
+    p_price_min: null,
+    p_price_max: null,
+    p_in_stock: null,
+    p_application: null,
+    p_dinnerware_safe: null,
+    p_food_safe_under_glaze: null,
+    p_lead_free: null,
+    p_prop65: null,
   });
 
   expect(screen.getByText("Sage")).toBeTruthy();

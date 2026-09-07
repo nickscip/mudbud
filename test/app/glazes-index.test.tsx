@@ -55,6 +55,14 @@ const NO_FILTERS = {
   p_opacity: null,
   p_food_safe: null,
   p_clay_body: null,
+  p_price_min: null,
+  p_price_max: null,
+  p_in_stock: null,
+  p_application: null,
+  p_dinnerware_safe: null,
+  p_food_safe_under_glaze: null,
+  p_lead_free: null,
+  p_prop65: null,
 };
 
 /** Advance past the 250ms debounce and let the resolved RPC land. */

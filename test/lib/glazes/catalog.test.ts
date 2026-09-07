@@ -22,7 +22,7 @@ const supa = jest.requireMock("@/lib/supabase") as {
   supabase: { rpc: jest.Mock; from: jest.Mock };
 };
 
-/** The 13 named arguments `search_glazes` takes, with everything unset. */
+/** The 21 named arguments `search_glazes` takes, with everything unset. */
 const NO_FILTERS = {
   q: null,
   p_manufacturer: null,
@@ -37,6 +37,14 @@ const NO_FILTERS = {
   p_code_manufacturers: null,
   p_limit: 41,
   p_offset: 0,
+  p_price_min: null,
+  p_price_max: null,
+  p_in_stock: null,
+  p_application: null,
+  p_dinnerware_safe: null,
+  p_food_safe_under_glaze: null,
+  p_lead_free: null,
+  p_prop65: null,
 };
 
 describe("searchGlazes", () => {
@@ -73,6 +81,14 @@ describe("searchGlazes", () => {
         foodSafeOnly: true,
         clayBodyIds: [5],
         marks: [{ manufacturer: "amaco", code: "PC-20" }],
+        priceMin: 5,
+        priceMax: 20,
+        inStockOnly: true,
+        applications: ["dipping"],
+        dinnerwareSafeOnly: true,
+        foodSafeUnderGlazeOnly: true,
+        leadFreeOnly: true,
+        noProp65: true,
       },
       { limit: 2, offset: 10 }
     );
@@ -91,6 +107,14 @@ describe("searchGlazes", () => {
       p_code_manufacturers: ["amaco"],
       p_limit: 3,
       p_offset: 10,
+      p_price_min: 5,
+      p_price_max: 20,
+      p_in_stock: true,
+      p_application: ["dipping"],
+      p_dinnerware_safe: true,
+      p_food_safe_under_glaze: true,
+      p_lead_free: true,
+      p_prop65: false,
     });
     expect(page).toEqual({
       matches: [rows[0]],

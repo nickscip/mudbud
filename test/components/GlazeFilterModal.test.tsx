@@ -142,6 +142,9 @@ describe("GlazeFilterModal", () => {
         "Surface",
         "Opacity",
         "Clay body shown",
+        "Price",
+        "Availability",
+        "Application",
         "Safety",
         "Your glazes",
       ]) {
@@ -366,6 +369,36 @@ describe("GlazeFilterModal", () => {
       expect(applied(spies)[0]).toEqual({});
     });
 
+    it("toggles every safety flag independently, and in stock beside them", () => {
+      const spies = setup();
+
+      press("In stock");
+      press("Dinnerware safe");
+      press("Food safe under glaze");
+      press("Lead free");
+      press("No Prop 65 warning");
+      expect(screen.getByLabelText("No Prop 65 warning")).toBeSelected();
+      press("Lead free");
+
+      expect(applied(spies)[0]).toEqual({
+        inStockOnly: true,
+        dinnerwareSafeOnly: true,
+        foodSafeUnderGlazeOnly: true,
+        noProp65: true,
+      });
+    });
+
+    it("lets application chips accumulate as one facet", () => {
+      const spies = setup();
+
+      press("Dipping");
+      press("Brushing");
+      expect(screen.getByLabelText("Dipping")).toBeSelected();
+      press("Dipping");
+
+      expect(applied(spies)[0]).toEqual({ applications: ["brushing"] });
+    });
+
     it("keeps the mark chips mutually exclusive", () => {
       const spies = setup();
 
@@ -389,6 +422,52 @@ describe("GlazeFilterModal", () => {
     });
   });
 
+  describe("the price bounds", () => {
+    const typeMin = (text: string) =>
+      fireEvent.changeText(screen.getByLabelText("Minimum price"), text);
+    const typeMax = (text: string) =>
+      fireEvent.changeText(screen.getByLabelText("Maximum price"), text);
+
+    it("shows the incoming bounds and reads typed ones back as numbers", () => {
+      const spies = setup({ filters: { priceMin: 5, priceMax: 20 } });
+      expect(screen.getByLabelText("Minimum price").props.value).toBe("5");
+      expect(screen.getByLabelText("Maximum price").props.value).toBe("20");
+
+      typeMin("12.");
+      // The keystroke survives as typed, while the draft already holds the parsed value.
+      expect(screen.getByLabelText("Minimum price").props.value).toBe("12.");
+      typeMax("");
+
+      expect(applied(spies)[0]).toEqual({ priceMin: 12 });
+    });
+
+    it("swaps crossed bounds on apply", () => {
+      const spies = setup();
+
+      typeMin("30");
+      typeMax("10");
+
+      expect(applied(spies)[0]).toEqual({ priceMin: 10, priceMax: 30 });
+    });
+
+    it("ignores text that is not a price", () => {
+      const spies = setup();
+
+      typeMax("abc");
+
+      expect(applied(spies)[0]).toEqual({});
+    });
+
+    it("is emptied by clear all", () => {
+      const spies = setup({ filters: { priceMin: 5 } });
+
+      press("Clear all filters");
+
+      expect(screen.getByLabelText("Minimum price").props.value).toBe("");
+      expect(applied(spies)[0]).toEqual({});
+    });
+  });
+
   describe("clear, cancel and apply", () => {
     it("resets the whole draft, mark filter included", () => {
       const spies = setup({
@@ -401,6 +480,10 @@ describe("GlazeFilterModal", () => {
           opacityIds: [2],
           foodSafeOnly: true,
           clayBodyIds: [1],
+          priceMax: 20,
+          inStockOnly: true,
+          applications: ["dipping"],
+          leadFreeOnly: true,
         },
         markFilter: "owned",
       });
