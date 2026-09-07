@@ -263,16 +263,22 @@ jobs:
         # live here and not in CI — there is nothing to assert about 352 glazes until 352 glazes
         # exist.
         #
-        # Skipped for a capped run. `limit` is offered above precisely so someone can smoke-test
-        # with 50 products, and the first assertion here is "at least 300 glazes" — so running it
-        # against a deliberate partial load would fail the run for doing exactly what was asked.
-        # A scheduled run has no inputs at all, which is the case that matters.
-        # Skipped for a capped run *and* for a single-source run. Both are deliberate partial
-        # loads, and the floors below judge the whole catalog: asserting them after refreshing
-        # one source would fail the run for doing exactly what was asked.
-        if: |
-          (github.event.inputs.limit == '' || github.event.inputs.limit == '0')
-          && (github.event.inputs.manufacturer == '' || github.event.inputs.manufacturer == 'all')
+        # Skipped for a capped run, and only for a capped run. `limit` is offered above precisely
+        # so someone can smoke-test with 50 products into a fresh database, and the first
+        # assertion in the file is "at least 300 glazes" — so running it against a deliberate
+        # partial load would fail the run for doing exactly what was asked. A scheduled run has no
+        # inputs at all, which is the case that matters.
+        #
+        # A single-source run is *not* skipped, and an earlier version of this condition got that
+        # wrong. It reasoned from what the run did; the file asserts what the database contains.
+        # The catalog is cumulative — nothing is ever deleted, a withdrawn product is marked
+        # `Unavailable` and kept (roadmap E7) — so refreshing one brand leaves every other brand's
+        # rows exactly where they were, and the whole-catalog floors pass on a database that was
+        # already loaded. The first whole-corpus Mayco backfill ran with no corpus check at all
+        # because of that clause, and the regression the file is best placed to catch — a reparse
+        # that rewrites every appearance with its colour nulled, at an unchanged row count — had to
+        # be verified by hand afterwards.
+        if: github.event.inputs.limit == '' || github.event.inputs.limit == '0'
         working-directory: .
         env:
           DB_URL: ${{ secrets.SUPABASE_DB_URL }}
