@@ -20,6 +20,17 @@ begin
   -- pass. A floor per manufacturer is the only version of this check that fails when one source
   -- fails.
   --
+  -- Be precise about what a floor on `glazes` can see, because it is less than it looks. Nothing
+  -- ever deletes a glaze — a product the manufacturer withdraws is marked `Unavailable` and kept
+  -- (roadmap E7) — so a brand's row count is a ratchet: once loaded it can only rise. These floors
+  -- therefore catch exactly one thing, a new source whose *first* load parsed to nothing. They are
+  -- blind to a source that goes dark later, since the rows it loaded last month still count, and
+  -- they would pass forever on a brand whose site no longer exists. Collapse detection lives
+  -- upstream in the loader's `listing_is_complete`, which compares each discovery pass against
+  -- what is already held. The checks in this file that stay live after the first load are the
+  -- per-brand ones on *appearances*, further down — those rows are deleted and rewritten on every
+  -- re-ingest, so they move when the pipeline regresses.
+  --
   -- Deliberately loose (roughly half of what each source should yield) rather than exact: a
   -- manufacturer legitimately adds and discontinues products, and this file should fail on a
   -- pipeline break, not on a catalogue decision. AMACO's sitemap yields ~352 glazes and Mayco's
@@ -87,9 +98,46 @@ begin
     raise exception 'only % layering links resolved; the second pass may not have run', n;
   end if;
 
-  -- The clay axis — the thing the feature was originally asked for.
-  select count(*) into n from appearances where clay_body_id is not null;
-  if n = 0 then raise exception 'no appearance names a clay body'; end if;
+  -- The two appearance columns that regress silently, judged per brand.
+  --
+  -- Appearance rows are not evergreen the way glaze rows are: every re-ingest deletes and
+  -- rewrites them. That is what makes these checks live where the floors above are not, and it
+  -- is also how they fail — E6 was a text-only reparse that reinserted every appearance with
+  -- `hex` and all six Lab columns null, at an unchanged row count, so no count of rows could see
+  -- it. The first hosted Mayco clay backfill had to be verified against that signature by hand;
+  -- this is that check, written down.
+  --
+  -- Per brand, for the same reason the glaze floors are: a global count passes on one brand's
+  -- rows while the other brand's have been wiped. Only a brand that has appearances is judged,
+  -- so a source seeded by migration but not yet crawled is not flagged.
+  --
+  -- Colour is held to a quarter, matching the colour-terms ratio below, rather than to zero. An
+  -- image whose fetch fails mid-crawl leaves its appearance with no measured colour — that is
+  -- the `image_unreadable` row in `parse_issues` — and a handful of those is a crawl blemish,
+  -- not a pipeline break. Every hosted appearance carries a colour today, so the slack is
+  -- unused; the regression this exists for nulled all of them, which no ratio misses. A
+  -- from-scratch `--no-images` load fails this, and should: that is a corpus with no colour,
+  -- and this file judges a crawled catalog, not a smoke test. Clay is held to at least one: the
+  -- axis the feature was originally asked for, text-derived so `--no-images` still writes it,
+  -- and the first thing a filename-grammar regression zeroes.
+  for brand in
+    select m.key,
+           count(*)                                           as appearances,
+           count(*) filter (where a.hex is null)              as colourless,
+           count(*) filter (where a.clay_body_id is not null) as with_clay
+    from appearances a
+    join glazes g on g.id = a.glaze_id
+    join manufacturers m on m.id = g.manufacturer_id
+    group by m.key
+  loop
+    if brand.colourless > brand.appearances / 4 then
+      raise exception '% of % % appearances have no measured colour; a reparse dropped it (E6)',
+        brand.colourless, brand.appearances, brand.key;
+    end if;
+    if brand.with_clay = 0 then
+      raise exception 'no % appearance names a clay body', brand.key;
+    end if;
+  end loop;
 
   -- Colour search is only reachable through these terms.
   select count(*) into n from glazes where cardinality(color_terms) = 0;
