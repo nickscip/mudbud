@@ -553,6 +553,30 @@ the "no edits" claim above is now over a smaller surface than the branch itself 
   them multi-clay tiles or `clay_bodies_test` filenames. Deploy order is free: the new ETL on
   the old schema files `unknown_clay_body` and writes null. No app change — the RPCs already
   return `cb.name`, and D3's on-different-clays rail filters on `clay_body !== null`.
+
+  **Live on hosted, 2026-09-06**, which is what turns the offline sweep into rows the app
+  can read. Two dispatches, both against `staging` because G1 measured the two environments onto
+  one database and `production`'s reviewer guards a name rather than a boundary. First
+  `deploy-schema.yml`: the mandatory dry run reported exactly one unrecorded file and a ledger
+  agreeing through `20260807000100`, and the apply then passed `contract.sql` against the real
+  database — the only place the anon grants are ever really checked — with the after-ledger
+  agreeing. Then the whole-corpus text-only backfill 065e987 added, which is the *only* route a
+  grammar change reaches already-crawled rows by: 630 Mayco products in about 15 minutes, no
+  crawl delay because nothing is fetched.
+  **229 appearances gained a clay body — exactly the 229 appearance-bearing roles the sweep
+  predicted**, and every one of the seven seeded rows is used rather than dead: `dark` 64
+  (the same 64 `_dark_clay_web` Stoneware filenames the migration cites, which is the seed set
+  corroborating itself against a different corpus), white 45, speckled 32, black 31, dark-brown
+  30, red 19, wheat 8. `glaze_appearances('SW-225','mayco')` now answers with six clays and a
+  distinct measured hex per clay, dark bodies reading darker — the rail's whole point.
+  E6's regression was checked rather than inferred from a green run, because its signature is
+  **nulled colour at an unchanged row count** and no exit status can see it: Mayco held 2829 of
+  2829 on `hex`, `hex2`, `lab_l`, `lab_a` and `lab_b`, 2878 images kept `storage_path`, `sha256`
+  and dimensions, F8b's 8 composite crop/coat rows survived, and AMACO was untouched throughout.
+  Zero new parse issues; the 20 open ones all predate 2026-08-09. One gap worth knowing for the
+  next single-source run: `sync-catalog.yml` **skips `data_quality.sql` for one manufacturer**,
+  by design, so a backfill gets no corpus assertion at all — it was run by hand against hosted
+  afterwards instead, exit 0 at 982 glazes and 4158 appearances.
 - **F9 · Tests and fixtures were single-source shaped** — **done**, except the part that
   needs Mayco to exist. `tests/fixtures/<key>/` mirrors the registry (the AMACO images
   moved under `fixtures/amaco/images/`), conftest's helpers take a source parameter and
