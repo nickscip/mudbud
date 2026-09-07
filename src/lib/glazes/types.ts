@@ -107,7 +107,10 @@ export type GlazeAppearance = {
   image_height: number | null;
 };
 
-/** The values `search_glazes` accepts in `p_application`. */
+/**
+ * The values `search_glazes` accepts in `p_application`. The sheet offers only `dipping` today:
+ * the ETL never writes `is_brushing`, so `brushing` is a wire value with no producer behind it.
+ */
 export type GlazeApplication = "dipping" | "brushing";
 
 export type GlazeFilters = {

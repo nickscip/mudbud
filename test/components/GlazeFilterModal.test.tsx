@@ -388,15 +388,21 @@ describe("GlazeFilterModal", () => {
       });
     });
 
-    it("lets application chips accumulate as one facet", () => {
+    it("toggles the application facet, and offers no brushing chip until the ETL writes it", () => {
       const spies = setup();
 
+      expect(screen.queryByLabelText("Brushing")).toBeNull();
       press("Dipping");
-      press("Brushing");
       expect(screen.getByLabelText("Dipping")).toBeSelected();
+      expect(applied(spies)[0]).toEqual({ applications: ["dipping"] });
+    });
+
+    it("clears the application facet when its only chip is pressed again", () => {
+      const spies = setup({ filters: { applications: ["dipping"] } });
+
       press("Dipping");
 
-      expect(applied(spies)[0]).toEqual({ applications: ["brushing"] });
+      expect(applied(spies)[0]).toEqual({});
     });
 
     it("keeps the mark chips mutually exclusive", () => {

@@ -95,10 +95,13 @@ the text field now owns the first and the filter modal owns the second.
     use** — the parsers record only the warning's presence, so the column is never `false` and
     "no Prop 65 warning" coalesces null to false or it could return nothing. The sheet gained
     Price (two typed bounds, swapped on Apply if crossed), Availability, Application and a fuller
-    Safety row. Not count-backed, deliberately, like `foodSafeOnly` before it — but measured on the
-    local catalog `is_brushing` and `lead_free` are true on **zero** rows, so those two chips are
-    honest empty answers until the ETL populates them; make the flags count-backed if that stays
-    true on hosted.
+    Safety row. Not count-backed, deliberately, like `foodSafeOnly` before it — but measured on
+    hosted, `lead_free` is true on **zero** rows: the loader writes it and no parser sets it, so
+    that chip is an honest empty answer until a source publishes the claim. `is_brushing` is
+    worse and review caught it: **nothing in the ETL produces it** — no `Badges` field, no loader
+    column, no AMACO icon — so the RPC accepts `'brushing'` in `p_application` but the sheet offers
+    only Dipping. Add the chip when the producer exists; make the flags count-backed if
+    `lead_free` stays at zero.
 - **A5 · Filter UX** — **partial**. The mixed horizontal rail is gone; one active-facet-count
   chip opens a React Native page-sheet modal with draft/Apply semantics, clear-all, labelled
   per-facet rows, and state that survives navigating into a glaze and back. The 43-value Line

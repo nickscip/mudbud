@@ -64,10 +64,10 @@ const SAFETY_FLAGS: ReadonlyArray<[FlagKey, string]> = [
   ["noProp65", "No Prop 65 warning"],
 ];
 
-const APPLICATIONS: ReadonlyArray<[GlazeApplication, string]> = [
-  ["dipping", "Dipping"],
-  ["brushing", "Brushing"],
-];
+// The RPC also accepts "brushing", but nothing in the ETL writes `glazes.is_brushing` — no model
+// field, no loader column, no source icon — so offering it would be a guaranteed empty tap. Add
+// the chip when the producer exists; the wire contract already carries it.
+const APPLICATIONS: ReadonlyArray<[GlazeApplication, string]> = [["dipping", "Dipping"]];
 
 /** The typed text behind the two price bounds; kept as strings so "12." survives a keystroke. */
 const priceText = (filters: GlazeFilters) => ({
